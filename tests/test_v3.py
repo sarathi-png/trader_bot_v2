@@ -50,7 +50,7 @@ class V3Tests(unittest.TestCase):
         store = storage.get_store()
         run = store.start_run(3)
         store.finish_run(run, 3, 0, 0, {"details": []})
-        store.set_state("worker_state", "RUNNING")
+        store.set_state("worker_state", "STARTING")
         from operations import dashboard_snapshot
         snapshot = dashboard_snapshot()
         self.assertEqual(len(snapshot["metrics"]), 10)

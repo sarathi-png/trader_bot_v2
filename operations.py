@@ -99,6 +99,11 @@ def dashboard_snapshot() -> dict:
     last_finished = parse_time(last.get("finished_at"))
     stale = bool(last_finished and datetime.now(timezone.utc) - last_finished > timedelta(minutes=30))
     worker_state = store.get_state("worker_state", "STARTING")
+    # During ZeroGPU replica replacement the persistent DB can briefly contain
+    # STARTING from the prior container. A recent completed run is stronger
+    # evidence that this dashboard is serving an active bot.
+    if worker_state == "STARTING" and last_finished and datetime.now(timezone.utc) - last_finished <= timedelta(minutes=30):
+        worker_state = "RUNNING"
     overall = "DEGRADED" if stale or worker_state == "ERROR" else worker_state
     return {
         "health_markdown": _health_markdown(overall, last, next_scan, stale),

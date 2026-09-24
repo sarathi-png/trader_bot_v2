@@ -9,7 +9,8 @@ from operations import (dashboard_snapshot, monitor_paper_positions, next_scan_a
                         parse_time, record_heartbeat, signal_row, position_row, closed_row)
 from storage import get_store
 
-_state_lock=threading.Lock(); _analysis_lock=threading.Lock(); _signal_history=[]; _HISTORY_CAP=50
+_state_lock=threading.Lock(); _analysis_lock=threading.Lock(); _worker_lock=threading.Lock(); _worker_started=False
+_signal_history=[]; _HISTORY_CAP=50
 SIGNAL_HEADERS=["Symbol","Signal","Entry","SL","TP","RRR","HTF Trend","Status","Telegram","Created UTC"]
 POSITION_HEADERS=["ID","Symbol","Side","Entry","Quantity","SL","TP","Status","Opened UTC"]
 CLOSED_HEADERS=["ID","Symbol","Side","Entry","Exit","P&L","Exit reason","Closed UTC"]
@@ -34,7 +35,9 @@ def _outputs(snapshot=None):
             [position_row(x) for x in s["positions"]],[closed_row(x) for x in s["closed"]],
             s["chart"],s["status"]]
 
-def initial_view(): return _outputs()
+def initial_view():
+    ensure_worker()
+    return _outputs()
 def refresh_signals():
     if not _analysis_lock.acquire(blocking=False):
         s=dashboard_snapshot(); return _outputs(s)+[ "Analysis already running; current data shown." ]
@@ -47,6 +50,15 @@ def refresh_signals():
     finally:
         _analysis_lock.release()
     return _outputs()+[note]
+
+def ensure_worker():
+    global _worker_started
+    with _worker_lock:
+        if _worker_started: return
+        _worker_started=True
+    record_heartbeat("RUNNING")
+    threading.Thread(target=run_bot_loop,daemon=True,name="trading-bot-loop").start()
+
 
 def run_bot_loop():
     from main import run_analysis_once
@@ -91,7 +103,6 @@ with gr.Blocks(title="Trading Bot v3") as demo:
     demo.load(initial_view,outputs=outputs)
 
 if __name__=="__main__":
-    record_heartbeat("STARTING")
-    threading.Thread(target=run_bot_loop,daemon=True,name="trading-bot-loop").start()
+    ensure_worker()
     demo.launch(theme=gr.themes.Soft())
 

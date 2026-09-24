@@ -290,7 +290,7 @@ def run_analysis_once() -> list:
         try:
             signal = analyze_symbol(ticker)
             if signal:
-                process_signal(signal)
+                signal["chart_path"] = process_signal(signal)
                 signals.append(signal)
         except Exception as e:
             logger.error(f"Error analyzing {ticker}: {e}")

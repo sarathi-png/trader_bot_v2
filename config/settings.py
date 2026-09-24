@@ -48,7 +48,7 @@ TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
 
 
 # ─── Exchange Configuration ──────────────────────────────────────────────────
-EXCHANGE_NAME: str = os.getenv("EXCHANGE_NAME", "binance")
+EXCHANGE_NAME: str = os.getenv("EXCHANGE_NAME", "yahoo")
 ACCOUNT_BALANCE: float = float(os.getenv("ACCOUNT_BALANCE", "10000.0"))
 
 

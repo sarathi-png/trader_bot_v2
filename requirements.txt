@@ -8,3 +8,4 @@ numpy>=1.24.0
 # gradio >= 5 is required: gradio 4.x imports the removed huggingface_hub.HfFolder
 # and crashes with modern starlette/jinja2 ("TypeError: unhashable type: 'dict'").
 gradio==6.15.1
+yfinance>=1.0.0

@@ -164,6 +164,20 @@ The scheduler is aligned to the configured scan interval with a small offset. Fo
 Recommended progression: paper mode, backtest, OpenAlgo Analyzer Mode, broker sandbox, then small supervised live orders. Do not enable live execution until idempotency, portfolio limits, SL/TP handling, and broker reconciliation are implemented and tested.
 
 
+## v3 Operations Dashboard
+
+The Space now exposes persisted bot health, 24-hour run counts, signals-today count, paper positions, closed trades, realized P&L, configured position limits, execution mode, kill-switch state, Telegram configuration, and OpenAlgo state. The background worker aligns scans to the configured post-close offset, records a durable heartbeat, monitors paper SL/TP levels, and prevents overlapping manual/background analyses.
+
+Paper orders use risk-based sizing constrained by `MAX_POSITION_PCT`, the kill switch, `MAX_OPEN_POSITIONS`, and `MAX_DAILY_LOSS_PCT`. Slippage and fees are percentage values (for example `0.02` means 0.02%). Real exchange execution remains unavailable.
+
+## Validation
+
+Run the repeatable v3 checks with:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## v3 paper execution and OpenAlgo guard
 
 Signals in `EXECUTION_MODE=PAPER` now create durable simulated positions in the SQLite store. The paper engine supports fees, configurable slippage, local SL/TP checks, realized P&L, and daily P&L tracking. `execution/openalgo.py` is disabled by default; it refuses `place_order` unless `OPENALGO_ENABLED=true` and URL/API key configuration are present. It is a guard/scaffold, not a live trading recommendation.

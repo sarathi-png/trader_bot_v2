@@ -37,6 +37,8 @@ from config.settings import (
     EXECUTION_MODE,
     PAPER_FEE_PCT,
     PAPER_SLIPPAGE_PCT,
+    MAX_OPEN_POSITIONS,
+    MAX_POSITION_PCT,
 )
 
 from data.streamer import fetch_recent_candles
@@ -278,10 +280,33 @@ def process_signal(signal_data: Dict[str, Any]) -> Optional[str]:
 
     # Paper execution is local, durable, and never submits exchange orders.
     if EXECUTION_MODE == "PAPER":
-        broker = PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT)
-        position = broker.open_position(signal_data, quantity=0.001)
-        get_store().update_signal(signal_data.get("signal_key"), order_id=f"PAPER-POS-{position['id']}", status="PAPER_OPEN")
-        signal_data["position_id"] = position["id"]
+        from operations import can_open_position
+        from execution.paper_engine import RiskError
+        allowed, reason = can_open_position()
+        if not allowed:
+            logger.warning("Paper position blocked by risk gate: %s", reason)
+            get_store().update_signal(signal_data.get("signal_key"), status="RISK_BLOCKED")
+            signal_data["final_status"] = "RISK_BLOCKED"
+        else:
+            risk_per_unit = abs(float(signal_data["entry"]) - float(signal_data["sl"]))
+            sizing = calc_position_size(ACCOUNT_BALANCE, RISK_PCT, risk_per_unit, MAX_POSITION_PCT)
+            sizing["quantity"] = min(sizing["quantity"], (ACCOUNT_BALANCE * MAX_POSITION_PCT / 100.0) / float(signal_data["entry"]))
+            sizing["quantity"] = round(sizing["quantity"], 8)
+            if sizing["quantity"] <= 0 or not sizing["valid"]:
+                logger.warning("Paper position blocked by position sizing")
+                get_store().update_signal(signal_data.get("signal_key"), status="RISK_BLOCKED")
+                signal_data["final_status"] = "RISK_BLOCKED"
+            else:
+                try:
+                    broker = PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, MAX_OPEN_POSITIONS)
+                    position = broker.open_position(signal_data, quantity=sizing["quantity"])
+                    get_store().update_signal(signal_data.get("signal_key"), order_id=f"PAPER-POS-{position['id']}", status="PAPER_OPEN")
+                    signal_data["position_id"] = position["id"]
+                    signal_data["final_status"] = "PAPER_OPEN"
+                except RiskError as exc:
+                    logger.warning("Paper position rejected: %s", exc)
+                    get_store().update_signal(signal_data.get("signal_key"), status="RISK_BLOCKED")
+                    signal_data["final_status"] = "RISK_BLOCKED"
     return chart_file
 
 
@@ -300,7 +325,9 @@ def run_analysis_once() -> list:
             if DEDUPE_ENABLED and not store.insert_signal(signal):
                 logger.info("Duplicate signal suppressed: %s", signal["signal_key"]); continue
             signal["chart_path"] = process_signal(signal)
-            if signal["chart_path"]: store.update_signal(signal["signal_key"], chart_path=signal["chart_path"], status="ALERTED")
+            store.update_signal(signal["signal_key"], chart_path=signal.get("chart_path"), telegram_status=signal.get("telegram_status"))
+            final_status = signal.get("final_status") or ("ALERTED" if signal.get("chart_path") else "CHART_FAILED")
+            store.update_signal(signal["signal_key"], status=final_status)
             signals.append(signal); details.append({"symbol": ticker, "result": "SIGNAL", "key": signal["signal_key"]})
         except Exception as exc:
             errors += 1; logger.exception("Error analyzing %s", ticker); details.append({"symbol": ticker, "result": "ERROR", "error": str(exc)})

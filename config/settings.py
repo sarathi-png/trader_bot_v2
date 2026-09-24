@@ -70,6 +70,7 @@ SCHEDULE_OFFSET_SECONDS = int(os.getenv("SCHEDULE_OFFSET_SECONDS", "5"))
 DEDUPE_ENABLED = os.getenv("DEDUPE_ENABLED", "true").lower() == "true"
 MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
+MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "25.0"))
 KILL_SWITCH = os.getenv("KILL_SWITCH", "false").lower() == "true"
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", "PAPER").upper()
 DB_PATH = OUTPUT_DIR / "trading_bot_v3.db"

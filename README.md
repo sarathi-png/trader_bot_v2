@@ -162,3 +162,8 @@ v3 persists analysis runs, signals, and paper orders in `output/trading_bot_v3.d
 The scheduler is aligned to the configured scan interval with a small offset. For production use, run the bot on a persistent host rather than relying on a Gradio Space process. Configure secrets in the host's environment or HF Space secrets; do not commit `.env` files.
 
 Recommended progression: paper mode, backtest, OpenAlgo Analyzer Mode, broker sandbox, then small supervised live orders. Do not enable live execution until idempotency, portfolio limits, SL/TP handling, and broker reconciliation are implemented and tested.
+
+
+## v3 paper execution and OpenAlgo guard
+
+Signals in `EXECUTION_MODE=PAPER` now create durable simulated positions in the SQLite store. The paper engine supports fees, configurable slippage, local SL/TP checks, realized P&L, and daily P&L tracking. `execution/openalgo.py` is disabled by default; it refuses `place_order` unless `OPENALGO_ENABLED=true` and URL/API key configuration are present. It is a guard/scaffold, not a live trading recommendation.

@@ -35,6 +35,8 @@ from config.settings import (
     DEDUPE_ENABLED,
     KILL_SWITCH,
     EXECUTION_MODE,
+    PAPER_FEE_PCT,
+    PAPER_SLIPPAGE_PCT,
 )
 
 from data.streamer import fetch_recent_candles
@@ -45,6 +47,7 @@ from engine.risk_engine import calc_sl_tp, calc_position_size, validate_rrr
 from charting.plotter import generate_signal_chart
 from alerts.telegram import send_telegram_signal, format_signal_caption
 from execution.broker import paper_order_stub
+from execution.paper_engine import PaperBroker
 from storage import get_store
 
 # Configure logging
@@ -273,14 +276,12 @@ def process_signal(signal_data: Dict[str, Any]) -> Optional[str]:
         ) else "FAILED"
     signal_data["telegram_status"] = telegram_status
 
-    # Paper order is deliberately local and never submits a live exchange order.
+    # Paper execution is local, durable, and never submits exchange orders.
     if EXECUTION_MODE == "PAPER":
-        order = paper_order_stub(
-            symbol=symbol, side="buy" if signal_type == "BUY" else "sell",
-            qty=0.001, sl=signal_data.get("sl"), tp=signal_data.get("tp"),
-        )
-        get_store().insert_order(order, signal_data.get("signal_key"))
-        signal_data["order_id"] = order.get("order_id")
+        broker = PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT)
+        position = broker.open_position(signal_data, quantity=0.001)
+        get_store().update_signal(signal_data.get("signal_key"), order_id=f"PAPER-POS-{position['id']}", status="PAPER_OPEN")
+        signal_data["position_id"] = position["id"]
     return chart_file
 
 

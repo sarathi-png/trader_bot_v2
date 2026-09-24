@@ -73,3 +73,9 @@ MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
 KILL_SWITCH = os.getenv("KILL_SWITCH", "false").lower() == "true"
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", "PAPER").upper()
 DB_PATH = OUTPUT_DIR / "trading_bot_v3.db"
+
+PAPER_FEE_PCT = float(os.getenv("PAPER_FEE_PCT", "0.1"))
+PAPER_SLIPPAGE_PCT = float(os.getenv("PAPER_SLIPPAGE_PCT", "0.02"))
+OPENALGO_URL = os.getenv("OPENALGO_URL", "")
+OPENALGO_API_KEY = os.getenv("OPENALGO_API_KEY", "")
+OPENALGO_ENABLED = os.getenv("OPENALGO_ENABLED", "false").lower() == "true"

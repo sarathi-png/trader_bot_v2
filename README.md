@@ -170,6 +170,22 @@ The Space now exposes persisted bot health, 24-hour run counts, signals-today co
 
 Paper orders use risk-based sizing constrained by `MAX_POSITION_PCT`, the kill switch, `MAX_OPEN_POSITIONS`, and `MAX_DAILY_LOSS_PCT`. Slippage and fees are percentage values (for example `0.02` means 0.02%). Real exchange execution remains unavailable.
 
+## Signal persistence on Hugging Face
+
+Hugging Face container files are ephemeral unless persistent storage is enabled. In the Space settings, open **Settings → Storage** and enable **Persistent Storage**. The mounted directory is `/data`. The application automatically uses `/data/trading_bot_v3.db` and `/data/charts` when running in a Space with that mount; local development continues to use `output/`.
+
+`DATA_DIR`, `DB_PATH`, and `CHART_DIR` can override these paths. The dashboard's **Storage** metric shows the active database path. Signals already delivered to Telegram cannot be recovered through Telegram's Bot API after the old ephemeral database is gone, but future signals will survive Space rebuilds when persistent storage is enabled.
+
+## Telegram private chat and group setup
+
+`TELEGRAM_CHAT_ID` is the destination for generated signal charts. It works for either a private chat or a group:
+
+1. In the Space settings, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as repository secrets.
+2. For a private chat, use the numeric chat ID returned by a trusted bot such as `@userinfobot`.
+3. For a group, add your bot to the group, allow it to send photos/messages, and use the group's numeric ID, which normally starts with `-` (for example `-1001234567890`). A bot ID or group username is not a valid `chat_id` for the Bot API.
+4. If the bot only needs to broadcast signals, privacy mode does not block outgoing photos. If you later add commands such as `/status`, configure the bot through `@BotFather` and give it appropriate group permissions.
+5. Restart/redeploy the Space after changing secrets. The dashboard shows **Telegram: Configured** only when both the token and destination chat ID are present; each signal separately records `SENT`, `FAILED`, or `NOT_CONFIGURED`.
+
 ## Validation
 
 Run the repeatable v3 checks with:

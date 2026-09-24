@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable
 
 from config.settings import (
-    ACCOUNT_BALANCE, EXECUTION_MODE, HTF, KILL_SWITCH, LTF,
+    ACCOUNT_BALANCE, DB_PATH, EXECUTION_MODE, HTF, KILL_SWITCH, LTF,
     MAX_DAILY_LOSS_PCT, MAX_OPEN_POSITIONS, OPENALGO_ENABLED,
-    PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, TELEGRAM_BOT_TOKEN,
+    PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
 )
 from data.streamer import fetch_recent_candles
 from execution.paper_engine import PaperBroker
@@ -113,7 +113,7 @@ def dashboard_snapshot() -> dict:
         "closed": closed,
         "chart": _latest_chart(signals),
         "status": _status_text(last, len(today_signals), stale, worker_state),
-        "telegram": "Configured" if TELEGRAM_BOT_TOKEN else "Not configured",
+        "telegram": "Configured" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "Not configured",
         "openalgo": "Enabled" if OPENALGO_ENABLED else "Disabled",
         "mode": EXECUTION_MODE,
         "tickers": list(ALL_TICKERS),
@@ -129,11 +129,26 @@ def _number(value: Any, digits: int = 2):
         return None
 
 
+def format_display_time(value: str | datetime | None) -> str:
+    """Format a timestamp as YYYY-MM-DD:h.m AM/PM in UTC."""
+    if isinstance(value, str):
+        value = parse_time(value)
+    if not isinstance(value, datetime):
+        return "Never"
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    value = value.astimezone(timezone.utc)
+    hour = value.hour % 12 or 12
+    return f"{value:%Y-%m-%d}:{hour}.{value:%M} {'AM' if value.hour < 12 else 'PM'} UTC"
+
+
 def _health_markdown(state: str, last: dict, next_scan: datetime, stale: bool) -> str:
     icon = {"RUNNING": "🟢", "STARTING": "🟡", "DEGRADED": "🟠", "STOPPED": "🔴", "ERROR": "🔴"}.get(state, "⚪")
-    last_text = last.get("finished_at") or last.get("started_at") or "Never"
+    last_text = last.get("finished_at") or last.get("started_at")
+    last_display = format_display_time(last_text)
+    next_display = format_display_time(next_scan)
     warning = " — last run is stale" if stale else ""
-    return f"## Bot health: {icon} {state}{warning}\nLast run: `{last_text}`  \nNext scheduled scan: `{next_scan.isoformat()}`"
+    return f"## Bot health: {icon} {state}{warning}\nLast run: `{last_display}`  \nScheduled run: `{next_display}`"
 
 
 def _metrics(health: dict, today_signals: int, runs_24h: int, risk: dict) -> list[list]:
@@ -146,8 +161,9 @@ def _metrics(health: dict, today_signals: int, runs_24h: int, risk: dict) -> lis
         ["Daily loss used", f"{risk.get('loss_limit_used_pct', 0):.1f}%"],
         ["Execution mode", risk.get("execution_mode", "UNKNOWN")],
         ["Kill switch", "ON" if risk.get("kill_switch") else "OFF"],
-        ["Telegram", "Configured" if TELEGRAM_BOT_TOKEN else "Not configured"],
+        ["Telegram", "Configured" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "Not configured"],
         ["OpenAlgo", "Enabled" if OPENALGO_ENABLED else "Disabled"],
+        ["Storage", str(DB_PATH)],
     ]
 
 
@@ -175,5 +191,5 @@ def _latest_chart(signals: list[dict]):
 def _status_text(last: dict, today_signals: int, stale: bool, worker_state: str) -> str:
     if stale:
         return f"DEGRADED — no recent completed run | signals today: {today_signals}"
-    stamp = last.get("finished_at") or "never"
+    stamp = format_display_time(last.get("finished_at") or last.get("started_at"))
     return f"Last run: {stamp} | signals: {last.get('signals_found', 0)} | errors: {last.get('errors', 0)} | worker: {worker_state}"

@@ -9,7 +9,7 @@ import pandas as pd
 
 import storage
 from execution.paper_engine import PaperBroker, RiskError
-from operations import next_scan_at
+from operations import format_display_time, next_scan_at
 from storage import Store
 
 
@@ -46,6 +46,12 @@ class V3Tests(unittest.TestCase):
         target = next_scan_at(datetime(2026, 1, 1, 14, 59, 58, tzinfo=timezone.utc))
         self.assertEqual((target.hour, target.minute, target.second), (15, 0, 5))
 
+    def test_display_time_format(self):
+        value = datetime(2026, 9, 24, 21, 5, tzinfo=timezone.utc)
+        self.assertEqual(format_display_time(value), "2026-09-24:9.05 PM UTC")
+        midnight = datetime(2026, 9, 24, 0, 5, tzinfo=timezone.utc)
+        self.assertEqual(format_display_time(midnight), "2026-09-24:12.05 AM UTC")
+
     def test_dashboard_snapshot_shape(self):
         store = storage.get_store()
         run = store.start_run(3)
@@ -53,7 +59,7 @@ class V3Tests(unittest.TestCase):
         store.set_state("worker_state", "STARTING")
         from operations import dashboard_snapshot
         snapshot = dashboard_snapshot()
-        self.assertEqual(len(snapshot["metrics"]), 10)
+        self.assertEqual(len(snapshot["metrics"]), 11)
         self.assertIn("RUNNING", snapshot["health_markdown"])
         self.assertEqual(snapshot["mode"], "PAPER")
 

@@ -53,10 +53,18 @@ ACCOUNT_BALANCE: float = float(os.getenv("ACCOUNT_BALANCE", "10000.0"))
 
 
 # ─── Paths ───────────────────────────────────────────────────────────────────
-OUTPUT_DIR = Path(__file__).parent.parent / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
-CHART_DIR = OUTPUT_DIR / "charts"
-CHART_DIR.mkdir(exist_ok=True)
+PROJECT_OUTPUT_DIR = Path(__file__).parent.parent / "output"
+PROJECT_OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Hugging Face Spaces can mount persistent storage at /data. Environment
+# overrides (DATA_DIR, DB_PATH, CHART_DIR) remain available for other hosts.
+_runtime_data_dir = os.getenv("DATA_DIR")
+if not _runtime_data_dir:
+    _runtime_data_dir = "/data" if os.getenv("SPACE_ID") and Path("/data").is_dir() else str(PROJECT_OUTPUT_DIR)
+OUTPUT_DIR = Path(_runtime_data_dir)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+CHART_DIR = Path(os.getenv("CHART_DIR", str(OUTPUT_DIR / "charts")))
+CHART_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── S/R Zone Clustering ────────────────────────────────────────────────────
@@ -73,7 +81,7 @@ MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
 MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "25.0"))
 KILL_SWITCH = os.getenv("KILL_SWITCH", "false").lower() == "true"
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", "PAPER").upper()
-DB_PATH = OUTPUT_DIR / "trading_bot_v3.db"
+DB_PATH = Path(os.getenv("DB_PATH", str(OUTPUT_DIR / "trading_bot_v3.db")))
 
 PAPER_FEE_PCT = float(os.getenv("PAPER_FEE_PCT", "0.1"))
 PAPER_SLIPPAGE_PCT = float(os.getenv("PAPER_SLIPPAGE_PCT", "0.02"))

@@ -37,6 +37,7 @@ def _outputs(snapshot=None):
 
 def initial_view():
     ensure_worker()
+    record_heartbeat("RUNNING")
     return _outputs()
 def refresh_signals():
     if not _analysis_lock.acquire(blocking=False):

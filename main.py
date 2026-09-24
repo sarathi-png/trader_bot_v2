@@ -1,4 +1,4 @@
-﻿"""
+"""
 Trading Bot v2 — Main Entry Point
 Orchestrates data fetching, analysis, signal generation, and alerting.
 Runs once per execution (manual mode) or loops every 15 min.
@@ -7,7 +7,7 @@ Runs once per execution (manual mode) or loops every 15 min.
 import sys
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -32,6 +32,9 @@ from config.settings import (
     ACCOUNT_BALANCE,
     CHART_DIR,
     ZONE_TOLERANCE_PCT,
+    DEDUPE_ENABLED,
+    KILL_SWITCH,
+    EXECUTION_MODE,
 )
 
 from data.streamer import fetch_recent_candles
@@ -42,6 +45,7 @@ from engine.risk_engine import calc_sl_tp, calc_position_size, validate_rrr
 from charting.plotter import generate_signal_chart
 from alerts.telegram import send_telegram_signal, format_signal_caption
 from execution.broker import paper_order_stub
+from storage import get_store
 
 # Configure logging
 logging.basicConfig(
@@ -80,6 +84,9 @@ def analyze_symbol(
     Returns:
         Dict with signal details or None if no valid signal
     """
+    if KILL_SWITCH:
+        logger.warning("Kill switch active; analysis skipped")
+        return None
     logger.info(f"Analyzing {symbol}...")
 
     # ─── Step 1: Fetch HTF data ──────────────────────────────────────────
@@ -117,7 +124,10 @@ def analyze_symbol(
     # ─── Step 5: Determine HTF trend direction ───────────────────────────
     df_htf_swings = find_swing_high_low(df_htf, n=N_SWING)
     htf_trend = get_trend_direction(df_htf_swings, n_swings=N_SWING)
-    logger.info(f"  HTF Trend: {htf_trend}")
+    df_htf_zones = find_nearest_zones(df_htf, n=N_SWING, tolerance_pct=ZONE_TOLERANCE_PCT)
+    htf_support = df_htf_zones["nearest_support"].iloc[-1]
+    htf_resistance = df_htf_zones["nearest_resistance"].iloc[-1]
+    logger.info(f"  HTF Trend: {htf_trend}; zones: {htf_support}, {htf_resistance}")
 
     # ─── Step 6: Generate signal ─────────────────────────────────────────
     signal = None
@@ -168,8 +178,8 @@ def analyze_symbol(
         trend="long" if signal_type == "BUY" else "short",
         atr_mult=ATR_MULT,
         min_rrr=MIN_RRR,
-        htf_support=nearest_support,
-        htf_resistance=nearest_resistance,
+        htf_support=htf_support,
+        htf_resistance=htf_resistance,
     )
 
     if not sl_tp["valid"]:
@@ -185,6 +195,8 @@ def analyze_symbol(
         "rrr": sl_tp["rrr"],
         "risk": sl_tp["risk"],
         "reward": sl_tp["reward"],
+        "timeframe": ltf,
+        "source_candle": df_ltf.index[-1].isoformat(),
     }
 
     logger.info(
@@ -250,55 +262,49 @@ def process_signal(signal_data: Dict[str, Any]) -> Optional[str]:
         timeframe=LTF,
     )
 
-    # Send Telegram alert
+    # Send Telegram alert; delivery status is persisted independently of chart creation.
+    telegram_status = "NOT_CONFIGURED"
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and chart_file:
-        send_telegram_signal(
+        telegram_status = "SENT" if send_telegram_signal(
             bot_token=TELEGRAM_BOT_TOKEN,
             chat_id=TELEGRAM_CHAT_ID,
             image_path=chart_file,
             caption_str=caption,
+        ) else "FAILED"
+    signal_data["telegram_status"] = telegram_status
+
+    # Paper order is deliberately local and never submits a live exchange order.
+    if EXECUTION_MODE == "PAPER":
+        order = paper_order_stub(
+            symbol=symbol, side="buy" if signal_type == "BUY" else "sell",
+            qty=0.001, sl=signal_data.get("sl"), tp=signal_data.get("tp"),
         )
-
-    # Log paper order
-    paper_order_stub(
-        symbol=symbol,
-        side="buy" if signal_type == "BUY" else "sell",
-        qty=0.001,  # Placeholder quantity
-        sl=signal_data.get("sl"),
-        tp=signal_data.get("tp"),
-    )
-
+        get_store().insert_order(order, signal_data.get("signal_key"))
+        signal_data["order_id"] = order.get("order_id")
     return chart_file
 
 
 def run_analysis_once() -> list:
-    """
-    Run signal analysis across all tickers once.
-
-    Returns:
-        List of processed signal data dicts
-    """
-    signals = []
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    logger.info(f"{'='*60}")
-    logger.info(f"Running analysis at {timestamp}")
-    logger.info(f"Tickers: {ALL_TICKERS}")
-    logger.info(f"HTF: {HTF}, LTF: {LTF}")
-    logger.info(f"{'='*60}")
-
+    """Run one persisted analysis pass and return only new, non-duplicate signals."""
+    store = get_store(); run_id = store.start_run(len(ALL_TICKERS))
+    signals=[]; ok=0; errors=0; details=[]
+    logger.info("Running v3 analysis; tickers=%s HTF=%s LTF=%s", ALL_TICKERS, HTF, LTF)
     for ticker in ALL_TICKERS:
         try:
-            signal = analyze_symbol(ticker)
-            if signal:
-                signal["chart_path"] = process_signal(signal)
-                signals.append(signal)
-        except Exception as e:
-            logger.error(f"Error analyzing {ticker}: {e}")
-            continue
-
-    if not signals:
-        logger.info("No valid signals generated this run")
-
+            signal = analyze_symbol(ticker); ok += 1
+            if not signal:
+                details.append({"symbol": ticker, "result": "NO_SIGNAL"}); continue
+            candle = signal.get("source_candle", datetime.now(timezone.utc).isoformat())
+            signal["signal_key"] = store.make_signal_key(ticker, LTF, signal["signal"], candle)
+            if DEDUPE_ENABLED and not store.insert_signal(signal):
+                logger.info("Duplicate signal suppressed: %s", signal["signal_key"]); continue
+            signal["chart_path"] = process_signal(signal)
+            if signal["chart_path"]: store.update_signal(signal["signal_key"], chart_path=signal["chart_path"], status="ALERTED")
+            signals.append(signal); details.append({"symbol": ticker, "result": "SIGNAL", "key": signal["signal_key"]})
+        except Exception as exc:
+            errors += 1; logger.exception("Error analyzing %s", ticker); details.append({"symbol": ticker, "result": "ERROR", "error": str(exc)})
+    store.finish_run(run_id, ok, len(signals), errors, {"details": details})
+    logger.info("Analysis complete: analyzed=%s signals=%s errors=%s", ok, len(signals), errors)
     return signals
 
 
@@ -324,8 +330,9 @@ def main():
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
 
-            logger.info("Sleeping for 15 minutes...")
-            time.sleep(15 * 60)
+            from config.settings import SCAN_INTERVAL_MINUTES, SCHEDULE_OFFSET_SECONDS
+            now=datetime.now(timezone.utc); interval=SCAN_INTERVAL_MINUTES*60; next_close=((now.timestamp()+SCHEDULE_OFFSET_SECONDS)//interval+1)*interval
+            delay=max(1,next_close-now.timestamp()); logger.info("Sleeping until next aligned scan in %.0fs",delay); time.sleep(delay)
     else:
         logger.info("Running in MANUAL mode (single execution)")
         signals = run_analysis_once()

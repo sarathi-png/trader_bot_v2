@@ -33,13 +33,15 @@ from config.settings import (
     LTF,
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
+    SCAN_INTERVAL_MINUTES,
 )
+from storage import get_store
 
 # ─── Shared signal state (written by the bot loop, read by the UI) ──────────
 _state_lock = threading.Lock()
 _signal_history: list = []  # newest first; capped at _HISTORY_CAP
 _HISTORY_CAP = 50
-_STATUS_IDLE = "Idle — background loop runs every 15 min, or click Refresh."
+_STATUS_IDLE = f"Idle - background loop runs every {SCAN_INTERVAL_MINUTES} min, or click Refresh."
 
 SIGNAL_HEADERS = ["Symbol", "Signal", "Entry", "SL", "TP", "RRR", "HTF Trend"]
 
@@ -97,6 +99,8 @@ def _history_rows() -> list:
     """Shared signal history rendered as DataFrame rows."""
     with _state_lock:
         signals = list(_signal_history)
+    if not signals:
+        signals = get_store().recent_signals(50)
     return [_signal_to_row(s) for s in signals]
 
 
@@ -104,6 +108,8 @@ def _latest_chart_path():
     """Path of the most recent signal chart that still exists on disk."""
     with _state_lock:
         signals = list(_signal_history)
+    if not signals:
+        signals = get_store().recent_signals(50)
     for sig in signals:
         path = sig.get("chart_path")
         if path and Path(path).exists():
@@ -138,6 +144,10 @@ def initial_view():
         if rows
         else _STATUS_IDLE
     )
+    health = get_store().health()
+    last = health.get("last_run")
+    if last:
+        status = f"Last run: {last.get('finished_at') or last.get('started_at')} | signals: {last.get('signals_found', 0)} | errors: {last.get('errors', 0)}"
     return rows, _latest_chart_path(), status
 
 
@@ -157,15 +167,15 @@ def run_bot_loop():
             print(f"[Bot] Error: {e}")
 
         # Sleep for 15 minutes
-        time.sleep(15 * 60)
+        time.sleep(SCAN_INTERVAL_MINUTES * 60)
 
 # Gradio Interface
 with gr.Blocks(
-    title="Trading Bot v2",
+    title="Trading Bot v3",
 ) as demo:
     gr.Markdown(
         """
-        # 🤖 Trading Bot v2
+        # Trading Bot v3
 
         **Status:** ✅ Active — Running in background
 

@@ -1,5 +1,5 @@
 ---
-title: Trading Bot v2
+title: Trading Bot v3
 emoji: 📈
 colorFrom: blue
 colorTo: green
@@ -9,7 +9,7 @@ app_file: app.py
 python_version: "3.10"
 pinned: false
 ---
-# Trading Bot v2
+# Trading Bot v3
 
 A multi-asset trading bot for crypto, stocks, and forex with signal generation, risk management, and Telegram alerts.
 
@@ -153,3 +153,12 @@ free personal accounts for Gradio Spaces. Consequences:
 ## License
 
 MIT
+
+
+## v3 operations and safety
+
+v3 persists analysis runs, signals, and paper orders in `output/trading_bot_v3.db`. Signals are deduplicated by symbol, timeframe, direction, and source candle. The default `EXECUTION_MODE=PAPER` never submits live orders. `KILL_SWITCH=true` stops analysis.
+
+The scheduler is aligned to the configured scan interval with a small offset. For production use, run the bot on a persistent host rather than relying on a Gradio Space process. Configure secrets in the host's environment or HF Space secrets; do not commit `.env` files.
+
+Recommended progression: paper mode, backtest, OpenAlgo Analyzer Mode, broker sandbox, then small supervised live orders. Do not enable live execution until idempotency, portfolio limits, SL/TP handling, and broker reconciliation are implemented and tested.

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Application configuration settings for Trading Bot v2.
 Loads environment variables and defines default trading parameters.
 """
@@ -63,3 +63,13 @@ CHART_DIR.mkdir(exist_ok=True)
 ZONE_TOLERANCE_PCT: float = 0.003  # 0.3% tolerance for zone clustering
 TRENDLINE_LOOKBACK: int = 30       # Candles for trendline regression
 TRENDLINE_MIN_SWINGS: int = 3      # Minimum swings for valid trendline
+
+# ─── v3 operations / persistence ─────────────────────────────────────────────
+SCAN_INTERVAL_MINUTES = int(os.getenv("SCAN_INTERVAL_MINUTES", "15"))
+SCHEDULE_OFFSET_SECONDS = int(os.getenv("SCHEDULE_OFFSET_SECONDS", "5"))
+DEDUPE_ENABLED = os.getenv("DEDUPE_ENABLED", "true").lower() == "true"
+MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
+MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
+KILL_SWITCH = os.getenv("KILL_SWITCH", "false").lower() == "true"
+EXECUTION_MODE = os.getenv("EXECUTION_MODE", "PAPER").upper()
+DB_PATH = OUTPUT_DIR / "trading_bot_v3.db"

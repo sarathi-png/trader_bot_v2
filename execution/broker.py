@@ -59,7 +59,7 @@ def paper_order_stub(
 
     # Print order for manual review
     print("\n" + "=" * 60)
-    print("📋 PAPER ORDER STUB — MANUAL EXECUTION REQUIRED")
+    print("PAPER ORDER STUB - MANUAL EXECUTION REQUIRED")
     print("=" * 60)
     print(f"  Order ID:  {order['order_id']}")
     print(f"  Symbol:    {order['symbol']}")
@@ -74,7 +74,7 @@ def paper_order_stub(
         print(f"  Take Profit: {order['tp']:.4f}")
     print(f"  Timestamp: {order['timestamp']}")
     print("=" * 60)
-    print("⚠️  DO NOT EXECUTE WITHOUT MANUAL VERIFICATION")
+    print("WARNING: DO NOT EXECUTE WITHOUT MANUAL VERIFICATION")
     print("=" * 60 + "\n")
 
     return order

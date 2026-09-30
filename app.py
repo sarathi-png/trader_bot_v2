@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from operations import (dashboard_snapshot, monitor_paper_positions, next_scan_at,
                         parse_time, record_heartbeat, signal_row, position_row, closed_row)
 from execution.modes import engage_kill_switch
-from operations import mode_snapshot, request_mode_change
+from operations import mode_snapshot, release_kill_switch, request_mode_change
 from storage import get_store
 
 _state_lock=threading.Lock(); _analysis_lock=threading.Lock(); _worker_lock=threading.Lock(); _worker_started=False
@@ -112,6 +112,9 @@ with gr.Blocks(title="Trading Bot v3") as demo:
             apply_mode_button=gr.Button("Apply mode",variant="primary")
             kill_button=gr.Button("ENGAGE KILL SWITCH - FORCE PAPER",variant="stop")
             refresh_mode_button=gr.Button("Refresh mode state")
+        with gr.Row():
+            release_phrase_box=gr.Textbox(label="Kill switch release phrase",interactive=True)
+            release_kill_button=gr.Button("Release kill switch")
         mode_note=gr.Textbox(label="Mode result",interactive=False)
         def on_mode_pick(choice):
             return gr.update(visible=(choice=="LIVE"))
@@ -122,12 +125,17 @@ with gr.Blocks(title="Trading Bot v3") as demo:
         def engage_kill():
             result=engage_kill_switch("dashboard button")
             return f"Kill switch ENGAGED - execution forced to {result['mode']}",mode_rows()
+        def release_kill(phrase):
+            ok,msg=release_kill_switch(phrase)
+            if not ok: record_heartbeat("ERROR",last_error=msg)
+            return msg,mode_rows()
 
-        gr.Markdown("Execution remains `PAPER`; OpenAlgo and exchange execution are disabled. The kill switch and daily-loss/open-position limits are enforced before simulated position creation. Telegram shows configured/not configured; delivery status is recorded per signal.")
+        gr.Markdown("Execution remains `PAPER`; OpenAlgo and exchange execution are disabled. The kill switch and daily-loss/open-position limits are enforced before simulated position creation. Engaging the kill switch takes one click; releasing it requires the confirmation phrase, so it cannot be disarmed by accident. Telegram shows configured/not configured; delivery status is recorded per signal.")
     zerogpu_button.click(zerogpu_status,outputs=gpu)
     mode_dropdown.change(on_mode_pick,inputs=mode_dropdown,outputs=phrase_box)
     apply_mode_button.click(apply_mode,inputs=[mode_dropdown,phrase_box],outputs=[mode_note,mode_row])
     kill_button.click(engage_kill,outputs=[mode_note,mode_row])
+    release_kill_button.click(release_kill,inputs=release_phrase_box,outputs=[mode_note,mode_row])
     # gr.DataFrame has no .click() event in Gradio 6, so the safety table is
     # refreshed by a button and on page load instead of a click on the table.
     refresh_mode_button.click(mode_rows,outputs=mode_row)
@@ -137,5 +145,5 @@ with gr.Blocks(title="Trading Bot v3") as demo:
 
 if __name__=="__main__":
     ensure_worker()
-    demo.launch(theme=gr.themes.Soft())
+    demo.launch(theme=gr.themes.Soft(), show_error=True)
 

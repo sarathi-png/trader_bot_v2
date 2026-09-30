@@ -85,6 +85,18 @@ class V3Tests(unittest.TestCase):
         self.assertIn("kill_switch", keys)
         self.assertIn("live_gate_reason", keys)
 
+    def test_dashboard_can_release_kill_switch(self):
+        """The kill switch must be releasable from the dashboard, not only engageable."""
+        import app
+        from execution.modes import confirmation_phrase, engage_kill_switch, kill_switch_active
+        engage_kill_switch("unit test")
+        self.assertTrue(kill_switch_active())
+        msg, _ = app.release_kill("wrong phrase")
+        self.assertIn("Incorrect", msg)
+        self.assertTrue(kill_switch_active())
+        msg, _ = app.release_kill(confirmation_phrase())
+        self.assertFalse(kill_switch_active())
+
     def test_scan_cycle_reconciles_paper_exits(self):
         """Regression: the headless loop must close positions, not only open them."""
         import main

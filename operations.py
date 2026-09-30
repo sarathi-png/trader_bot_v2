@@ -257,11 +257,23 @@ def closed_row(position: dict) -> list:
 
 
 def _latest_chart(signals: list[dict]):
+    """Newest still-readable chart path, or None.
+
+    Charts live on a mounted persistent volume, so the file can disappear
+    between the DB write and the read. Handing Gradio a path that cannot be
+    opened fails the whole page render, so verify it here instead.
+    """
     from pathlib import Path
     for signal in signals:
         path = signal.get("chart_path")
-        if path and Path(path).is_file():
-            return path
+        if not path:
+            continue
+        try:
+            candidate = Path(path)
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return str(candidate)
+        except OSError:
+            continue
     return None
 
 

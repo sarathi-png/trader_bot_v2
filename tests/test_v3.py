@@ -59,7 +59,7 @@ class V3Tests(unittest.TestCase):
         store.set_state("worker_state", "STARTING")
         from operations import dashboard_snapshot
         snapshot = dashboard_snapshot()
-        self.assertEqual(len(snapshot["metrics"]), 12)  # includes the Stage 4 LIVE gate row
+        self.assertEqual(len(snapshot["metrics"]), 13)  # Stage 4 gate row + paper track record
         self.assertIn("RUNNING", snapshot["health_markdown"])
         self.assertEqual(snapshot["mode"], "PAPER")
         from operations import risk_snapshot
@@ -84,6 +84,45 @@ class V3Tests(unittest.TestCase):
         self.assertIn("effective_mode", keys)
         self.assertIn("kill_switch", keys)
         self.assertIn("live_gate_reason", keys)
+
+    def test_scan_cycle_reconciles_paper_exits(self):
+        """Regression: the headless loop must close positions, not only open them."""
+        import main
+        with patch.object(main, "run_analysis_once", return_value=[{"s": 1}]), \
+             patch("operations.monitor_paper_positions", return_value=[{"c": 1}]) as monitor:
+            signals, closed = main.run_scan_cycle()
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(len(closed), 1)
+        monitor.assert_called_once()
+
+    def test_paper_exit_detects_intrabar_stop(self):
+        """An intrabar stop touch closes the trade even if the bar closes above it."""
+        signal = self.signal("intrabar")
+        storage.get_store().insert_signal(signal)
+        PaperBroker(0.0, 0.0).open_position(signal, 1.0)  # BUY: sl=95, tp=110
+        closed = PaperBroker(0.0, 0.0).check_exit(
+            {"TEST": {"high": 104.0, "low": 94.0, "close": 103.0}})
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["exit_reason"], "STOP_LOSS")
+        self.assertEqual(closed[0]["exit_price"], 95.0)
+
+    def test_paper_exit_is_stop_first_when_bar_touches_both(self):
+        """A bar spanning both levels resolves to the stop, as in the backtest."""
+        signal = self.signal("both")
+        storage.get_store().insert_signal(signal)
+        PaperBroker(0.0, 0.0).open_position(signal, 1.0)
+        closed = PaperBroker(0.0, 0.0).check_exit(
+            {"TEST": {"high": 111.0, "low": 94.0, "close": 105.0}})
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["exit_reason"], "STOP_LOSS")
+
+    def test_paper_exit_holds_when_levels_untouched(self):
+        signal = self.signal("hold")
+        storage.get_store().insert_signal(signal)
+        PaperBroker(0.0, 0.0).open_position(signal, 1.0)
+        closed = PaperBroker(0.0, 0.0).check_exit(
+            {"TEST": {"high": 101.0, "low": 99.0, "close": 100.5}})
+        self.assertEqual(closed, [])
 
     @staticmethod
     def signal(key):

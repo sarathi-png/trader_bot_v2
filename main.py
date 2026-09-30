@@ -389,6 +389,19 @@ def run_analysis_once() -> list:
     return signals
 
 
+def run_scan_cycle() -> tuple:
+    """One scheduled cycle: generate signals, then reconcile open paper positions.
+
+    Both halves matter. Analysis alone opens positions that are never
+    closed, which fills the open-position limit and risk-blocks every later
+    entry, so a paper track record can never accumulate.
+    """
+    from operations import monitor_paper_positions
+    signals = run_analysis_once()
+    closed = monitor_paper_positions()
+    return signals, closed
+
+
 def main():
     """
     Main entry point for the trading bot.
@@ -401,19 +414,24 @@ def main():
     loop_mode = os.getenv("TRADING_BOT_LOOP", "false").lower() == "true"
 
     if loop_mode:
-        logger.info("Starting in LOOP mode (every 15 minutes)")
+        from config.settings import SCAN_INTERVAL_MINUTES
+        from operations import next_scan_at
+        logger.info("Starting in LOOP mode (every %s minutes)", SCAN_INTERVAL_MINUTES)
         while True:
             try:
-                run_analysis_once()
+                signals, closed = run_scan_cycle()
+                logger.info("Scan complete: %s new signal(s), %s paper exit(s)",
+                            len(signals), len(closed))
             except KeyboardInterrupt:
                 logger.info("Bot stopped by user")
                 break
             except Exception as e:
                 logger.error(f"Unexpected error: {e}")
 
-            from config.settings import SCAN_INTERVAL_MINUTES, SCHEDULE_OFFSET_SECONDS
-            now=datetime.now(timezone.utc); interval=SCAN_INTERVAL_MINUTES*60; next_close=((now.timestamp()+SCHEDULE_OFFSET_SECONDS)//interval+1)*interval
-            delay=max(1,next_close-now.timestamp()); logger.info("Sleeping until next aligned scan in %.0fs",delay); time.sleep(delay)
+            target = next_scan_at()
+            delay = max(1.0, (target - datetime.now(timezone.utc)).total_seconds())
+            logger.info("Sleeping until next aligned scan in %.0fs", delay)
+            time.sleep(delay)
     else:
         logger.info("Running in MANUAL mode (single execution)")
         signals = run_analysis_once()

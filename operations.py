@@ -55,24 +55,34 @@ def next_scan_at(now: datetime | None = None) -> datetime:
     return datetime.fromtimestamp(boundary + max(0, SCHEDULE_OFFSET_SECONDS), tz=timezone.utc)
 
 
-def current_prices(symbols: Iterable[str]) -> Dict[str, float]:
-    prices: Dict[str, float] = {}
+def current_bars(symbols: Iterable[str]) -> Dict[str, Dict[str, float]]:
+    """Latest high/low/close per symbol, so intrabar stops are not missed."""
+    bars: Dict[str, Dict[str, float]] = {}
     for symbol in dict.fromkeys(symbols):
         try:
             frame = fetch_recent_candles(symbol, LTF, limit=2)
             if not frame.empty:
-                prices[symbol] = float(frame["close"].iloc[-1])
+                last = frame.iloc[-1]
+                bars[symbol] = {"high": float(last["high"]),
+                                "low": float(last["low"]),
+                                "close": float(last["close"])}
         except Exception as exc:
             record_heartbeat("DEGRADED", last_error=f"Price monitor {symbol}: {exc}")
-    return prices
+    return bars
 
 
 def monitor_paper_positions() -> list[dict]:
+    """Reconcile open paper positions against the latest closed candle.
+
+    Called on every scan cycle. Without this half of the cycle positions
+    never close, the open-position limit is reached, and every later entry
+    is risk-blocked, so no track record can accumulate.
+    """
     positions = get_store().open_positions()
     if not positions:
         return []
-    prices = current_prices(p["symbol"] for p in positions)
-    return PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, MAX_OPEN_POSITIONS).check_exit(prices)
+    bars = current_bars(p["symbol"] for p in positions)
+    return PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, MAX_OPEN_POSITIONS).check_exit(bars)
 
 
 def can_open_position() -> Tuple[bool, str]:
@@ -200,12 +210,21 @@ def _health_markdown(state: str, last: dict, next_scan: datetime, stale: bool) -
     return f"## Bot health: {icon} {state}{warning}\nLast run: `{last_display}`  \nScheduled run: `{next_display}`"
 
 
+def _track_record_text(track: dict | None) -> str:
+    """Progress toward the LIVE gate, in the same terms the gate uses."""
+    if not track:
+        return "no closed paper trades yet"
+    return (f"{track.get('trades', 0)} trades, {track.get('win_rate', 0)}% win, "
+            f"expectancy {track.get('expectancy', 0)}")
+
+
 def _metrics(health: dict, today_signals: int, runs_24h: int, risk: dict) -> list[list]:
     return [
         ["Signals today", today_signals],
         ["Analysis runs (24h)", runs_24h],
         ["Total stored signals", health.get("signal_count", 0)],
         ["Open paper positions", f"{risk.get('open_positions', 0)} / {risk.get('max_open_positions', 0)}"],
+        ["Paper track record", _track_record_text(risk.get("track_record"))],
         ["Daily realized P&L", _number(risk.get("daily_pnl", 0))],
         ["Daily loss used", f"{risk.get('loss_limit_used_pct', 0):.1f}%"],
         ["Execution mode", f"{risk.get('execution_mode')} (configured: {risk.get('configured_mode')})"],

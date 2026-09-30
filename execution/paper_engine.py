@@ -26,12 +26,29 @@ class PaperBroker:
         exit_price=self._fill_price(p['side'],current_price); direction=1 if p['side']=='BUY' else -1
         gross=(exit_price-p['entry_price'])*p['quantity']*direction; exit_fee=abs(exit_price*p['quantity'])*self.fee_pct/100
         return self.store.close_position(position_id,exit_price,gross-float(p['entry_fee'] or 0)-exit_fee,reason)
-    def check_exit(self, current_prices:Dict[str,float])->list:
+    def check_exit(self, current_prices:Dict[str,Any])->list:
+        """Close every open position whose SL or TP has been reached.
+
+        Each entry is either a bar mapping with high/low/close (preferred: a
+        level touched intrabar is a real fill) or a bare closing price. When
+        one bar touches both levels the stop is assumed to fill first, which
+        matches the conservative intrabar assumption in backtest/walk_forward.
+        """
         closed=[]
         for p in self.store.open_positions():
-            price=current_prices.get(p['symbol']); sl,tp=p['sl'],p['tp']
-            if price is None: continue
-            hit_sl=sl is not None and ((p['side']=='BUY' and price<=sl) or (p['side']=='SELL' and price>=sl)); hit_tp=tp is not None and ((p['side']=='BUY' and price>=tp) or (p['side']=='SELL' and price<=tp))
+            bar=current_prices.get(p['symbol']); sl,tp=p['sl'],p['tp']
+            if bar is None: continue
+            if isinstance(bar,dict):
+                high=bar.get('high'); low=bar.get('low'); close=bar.get('close')
+            else:
+                high=low=close=float(bar)
+            if close is None: continue
+            if high is None: high=close
+            if low is None: low=close
+            if p['side']=='BUY':
+                hit_sl=sl is not None and low<=sl; hit_tp=tp is not None and high>=tp
+            else:
+                hit_sl=sl is not None and high>=sl; hit_tp=tp is not None and low<=tp
             if hit_sl or hit_tp:
                 result=self.mark_and_close(p['id'],sl if hit_sl else tp,'STOP_LOSS' if hit_sl else 'TAKE_PROFIT')
                 if result: closed.append(result)

@@ -10,6 +10,12 @@ from operations import (dashboard_snapshot, monitor_paper_positions, next_scan_a
 from execution.modes import engage_kill_switch
 from operations import mode_snapshot, release_kill_switch, request_mode_change
 from storage import get_store
+from config.settings import CHART_DIR
+
+# Gradio refuses to hand out files it did not create, so charts written to the
+# mounted persistent volume (/data/charts on a Space) must be explicitly
+# allowed. Without this every page load fails as soon as one chart exists.
+ALLOWED_PATHS = [str(CHART_DIR)]
 
 _state_lock=threading.Lock(); _analysis_lock=threading.Lock(); _worker_lock=threading.Lock(); _worker_started=False
 _signal_history=[]; _HISTORY_CAP=50
@@ -145,5 +151,5 @@ with gr.Blocks(title="Trading Bot v3") as demo:
 
 if __name__=="__main__":
     ensure_worker()
-    demo.launch(theme=gr.themes.Soft(), show_error=True)
+    demo.launch(theme=gr.themes.Soft(), allowed_paths=ALLOWED_PATHS, show_error=True)
 

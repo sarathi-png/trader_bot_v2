@@ -85,6 +85,17 @@ class V3Tests(unittest.TestCase):
         self.assertIn("kill_switch", keys)
         self.assertIn("live_gate_reason", keys)
 
+    def test_dashboard_allows_serving_charts(self):
+        """Regression: charts live outside the app dir, so Gradio needs allowed_paths.
+
+        On a Space CHART_DIR is /data/charts. Without this, every page load
+        raises "Cannot move ... to the gradio cache dir" as soon as a chart
+        exists, which blanks the whole dashboard.
+        """
+        import app
+        from config.settings import CHART_DIR
+        self.assertIn(str(CHART_DIR), app.ALLOWED_PATHS)
+
     def test_dashboard_can_release_kill_switch(self):
         """The kill switch must be releasable from the dashboard, not only engageable."""
         import app

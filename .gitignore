@@ -8,7 +8,10 @@ env/
 venv/
 .venv/
 Lib/
-Scripts/
+# A root-level venv puts executables in Scripts/, but this project's own
+# validation scripts live there too: keep the .py files, ignore the rest.
+Scripts/*
+!Scripts/*.py
 Include/
 pyvenv.cfg
 

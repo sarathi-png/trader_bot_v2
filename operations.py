@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Tuple
 
 from config.settings import (
     ACCOUNT_BALANCE, DB_PATH, EXECUTION_MODE, HTF, KILL_SWITCH, LTF,
@@ -11,8 +12,18 @@ from config.settings import (
     PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
 )
 from data.streamer import fetch_recent_candles
+from execution.modes import (
+    KILL_SWITCH_KEY, MODE_KEY, ExecutionMode, confirmation_phrase,
+    configured_mode, effective_mode, engage_kill_switch, kill_switch_active,
+    live_gate_report, mode_snapshot, paper_track_record, release_kill_switch,
+    request_mode_change,
+)
 from execution.paper_engine import PaperBroker
 from storage import get_store
+
+logger = logging.getLogger(__name__)
+
+_store = get_store
 
 
 def utc_now_iso() -> str:
@@ -64,6 +75,39 @@ def monitor_paper_positions() -> list[dict]:
     return PaperBroker(PAPER_FEE_PCT, PAPER_SLIPPAGE_PCT, MAX_OPEN_POSITIONS).check_exit(prices)
 
 
+def can_open_position() -> Tuple[bool, str]:
+    """Pre-order gate. Returns (allowed, reason).
+
+    Enforced in order: kill switch, execution mode, portfolio limits,
+    daily loss limit. LIVE additionally requires the evidence gate.
+    """
+    from config.settings import ACCOUNT_BALANCE, MAX_DAILY_LOSS_PCT, MAX_OPEN_POSITIONS
+
+    if KILL_SWITCH or kill_switch_active():
+        return False, "Kill switch engaged — no new positions"
+
+    mode = effective_mode()
+    if mode is ExecutionMode.MANUAL:
+        return False, "MANUAL mode — signals only, no positions"
+
+    store = _store()
+    if store.open_positions_count() >= MAX_OPEN_POSITIONS:
+        return False, f"Open position limit reached ({MAX_OPEN_POSITIONS})"
+
+    daily_pnl = store.daily_realized_pnl()
+    loss_limit = abs(ACCOUNT_BALANCE) * MAX_DAILY_LOSS_PCT / 100.0
+    if loss_limit and daily_pnl <= -loss_limit:
+        return False, (f"Daily loss limit hit ({daily_pnl:.2f} <= "
+                       f"-{loss_limit:.2f}) — trading halted for today")
+
+    if mode is ExecutionMode.LIVE:
+        allowed, reason = live_gate_report()
+        if not allowed:
+            return False, reason
+
+    return True, f"OK ({mode.value})"
+
+
 def risk_snapshot() -> dict:
     store = get_store()
     daily_pnl = store.daily_realized_pnl()
@@ -75,9 +119,14 @@ def risk_snapshot() -> dict:
         "loss_limit_used_pct": max(0.0, -daily_pnl / loss_limit * 100) if loss_limit else 0.0,
         "open_positions": open_count,
         "max_open_positions": MAX_OPEN_POSITIONS,
-        "blocked": KILL_SWITCH or open_count >= MAX_OPEN_POSITIONS or (loss_limit and daily_pnl <= -loss_limit),
-        "kill_switch": KILL_SWITCH,
-        "execution_mode": EXECUTION_MODE,
+        "blocked": (KILL_SWITCH or kill_switch_active() or open_count >= MAX_OPEN_POSITIONS
+                    or (loss_limit and daily_pnl <= -loss_limit)),
+        "kill_switch": KILL_SWITCH or kill_switch_active(),
+        "execution_mode": effective_mode().value,
+        "configured_mode": configured_mode().value,
+        "live_allowed": live_gate_report()[0],
+        "live_gate_reason": live_gate_report()[1],
+        "track_record": paper_track_record(),
     }
 
 
@@ -159,7 +208,8 @@ def _metrics(health: dict, today_signals: int, runs_24h: int, risk: dict) -> lis
         ["Open paper positions", f"{risk.get('open_positions', 0)} / {risk.get('max_open_positions', 0)}"],
         ["Daily realized P&L", _number(risk.get("daily_pnl", 0))],
         ["Daily loss used", f"{risk.get('loss_limit_used_pct', 0):.1f}%"],
-        ["Execution mode", risk.get("execution_mode", "UNKNOWN")],
+        ["Execution mode", f"{risk.get('execution_mode')} (configured: {risk.get('configured_mode')})"],
+        ["LIVE gate", "OPEN — criteria met" if risk.get("live_allowed") else risk.get("live_gate_reason")],
         ["Kill switch", "ON" if risk.get("kill_switch") else "OFF"],
         ["Telegram", "Configured" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "Not configured"],
         ["OpenAlgo", "Enabled" if OPENALGO_ENABLED else "Disabled"],
@@ -168,7 +218,15 @@ def _metrics(health: dict, today_signals: int, runs_24h: int, risk: dict) -> lis
 
 
 def signal_row(signal: dict) -> list:
-    return [signal.get(k) for k in ("symbol", "direction", "entry", "sl", "tp", "rrr", "htf_trend", "status", "telegram_status", "created_at")]
+    row = [signal.get(k) for k in ("symbol", "direction", "entry", "sl", "tp", "rrr", "htf_trend", "status", "telegram_status", "created_at")]
+    score = signal.get("confluence_score")
+    if score is None:  # stored signals keep the full payload in details_json
+        try:
+            score = json.loads(signal.get("details_json") or "{}").get("confluence_score")
+        except (TypeError, ValueError):
+            score = None
+    row.insert(6, score)  # shown right after RRR
+    return row
 
 
 def position_row(position: dict) -> list:

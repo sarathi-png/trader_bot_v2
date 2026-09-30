@@ -39,17 +39,24 @@ from config.settings import (
     PAPER_SLIPPAGE_PCT,
     MAX_OPEN_POSITIONS,
     MAX_POSITION_PCT,
+    MAX_SPREAD_PCT,
+    DATA_STALE_MAX_BARS,
 )
 
 from data.streamer import fetch_recent_candles
+from data.delta_client import get_delta_client, resolve_delta_symbol
+from data.quality import candle_staleness_reason, spread_reason
+from operations import record_heartbeat
 from engine.indicators import atr_14
 from engine.sr_zones import find_swing_high_low, cluster_zones, find_nearest_zones
 from engine.trendlines import get_trend_direction
 from engine.risk_engine import calc_sl_tp, calc_position_size, validate_rrr
+from engine.confluence import analyze_confluence, gate_signal
 from charting.plotter import generate_signal_chart
 from alerts.telegram import send_telegram_signal, format_signal_caption
 from execution.broker import paper_order_stub
 from execution.paper_engine import PaperBroker
+from execution.modes import ExecutionMode, effective_mode
 from storage import get_store
 
 # Configure logging
@@ -94,17 +101,42 @@ def analyze_symbol(
         return None
     logger.info(f"Analyzing {symbol}...")
 
-    # ─── Step 1: Fetch HTF data ──────────────────────────────────────────
-    df_htf = fetch_recent_candles(symbol, htf, limit=200, exchange_name=exchange_name)
+    # ─── Step 1: Fetch HTF data (closed candles only) ────────────────────
+    df_htf = fetch_recent_candles(symbol, htf, limit=200, exchange_name=exchange_name, confirm_only=True)
     if df_htf.empty:
         logger.warning(f"  No HTF data for {symbol}, skipping")
         return None
 
-    # ─── Step 2: Fetch LTF data ──────────────────────────────────────────
-    df_ltf = fetch_recent_candles(symbol, ltf, limit=200, exchange_name=exchange_name)
+    # ─── Step 2: Fetch LTF data (closed candles only) ────────────────────
+    df_ltf = fetch_recent_candles(symbol, ltf, limit=200, exchange_name=exchange_name, confirm_only=True)
     if df_ltf.empty:
         logger.warning(f"  No LTF data for {symbol}, skipping")
         return None
+
+    # ─── Step 2b: Data-quality gates (source health, staleness, spread) ──
+    data_source = df_ltf.attrs.get("data_source", "yahoo")
+    dsym = resolve_delta_symbol(symbol)
+    if dsym and data_source != "delta":
+        record_heartbeat(
+            "DEGRADED",
+            last_error=f"{symbol}: Delta unavailable, using {data_source} data",
+        )
+    stale = candle_staleness_reason(df_ltf, ltf, DATA_STALE_MAX_BARS) or \
+        candle_staleness_reason(df_htf, htf, DATA_STALE_MAX_BARS)
+    if stale:
+        logger.warning(f"  {stale} for {symbol}, skipping signal")
+        record_heartbeat("DEGRADED", last_error=f"{symbol}: {stale}")
+        return None
+    if data_source == "delta" and dsym:
+        try:
+            quote = get_delta_client().fetch_quote(dsym)
+            wide = spread_reason(quote.get("best_bid"), quote.get("best_ask"), MAX_SPREAD_PCT)
+            if wide:
+                logger.warning(f"  {wide} for {symbol}, skipping signal")
+                record_heartbeat("DEGRADED", last_error=f"{symbol}: {wide}")
+                return None
+        except Exception as exc:
+            logger.warning("  Spread check failed for %s: %s", symbol, exc)
 
     # ─── Step 3: Compute ATR on LTF ─────────────────────────────────────
     df_ltf = df_ltf.copy()
@@ -176,6 +208,18 @@ def analyze_symbol(
         logger.info(f"  No signal for {symbol} (price not near S/R or trend mismatch)")
         return None
 
+    # ─── Step 6b: Multi-TF confluence scoring + gate ──────────────────────
+    confluence = analyze_confluence(df_ltf, df_htf)
+    side = "long" if signal_type == "BUY" else "short"
+    passed, gate_note = gate_signal(confluence, side)
+    logger.info(
+        f"  Confluence {confluence.direction} score={confluence.score}: "
+        + " | ".join(confluence.reasons)
+    )
+    if not passed:
+        logger.info(f"  Signal dropped by confluence gate: {gate_note}")
+        return None
+
     # ─── Step 7: Calculate SL/TP ─────────────────────────────────────────
     sl_tp = calc_sl_tp(
         df=df_ltf,
@@ -200,6 +244,7 @@ def analyze_symbol(
         "rrr": sl_tp["rrr"],
         "risk": sl_tp["risk"],
         "reward": sl_tp["reward"],
+        **confluence.to_signal_fields(),
         "timeframe": ltf,
         "source_candle": df_ltf.index[-1].isoformat(),
     }
@@ -279,7 +324,15 @@ def process_signal(signal_data: Dict[str, Any]) -> Optional[str]:
     signal_data["telegram_status"] = telegram_status
 
     # Paper execution is local, durable, and never submits exchange orders.
-    if EXECUTION_MODE == "PAPER":
+    mode = effective_mode()
+    if mode is ExecutionMode.LIVE:
+        # Deliberately not implemented. LIVE stays locked until the evidence
+        # gate passes AND Stage 5 (idempotent placement + reconciliation) is
+        # built. Until then we degrade to PAPER rather than pretend to trade.
+        logger.error("LIVE mode requested but live execution is not implemented; using PAPER")
+        record_heartbeat("DEGRADED", last_error="LIVE mode requested; falling back to PAPER")
+        mode = ExecutionMode.PAPER
+    if mode is ExecutionMode.PAPER:
         from operations import can_open_position
         from execution.paper_engine import RiskError
         allowed, reason = can_open_position()

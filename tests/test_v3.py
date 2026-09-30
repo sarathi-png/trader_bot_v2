@@ -59,9 +59,31 @@ class V3Tests(unittest.TestCase):
         store.set_state("worker_state", "STARTING")
         from operations import dashboard_snapshot
         snapshot = dashboard_snapshot()
-        self.assertEqual(len(snapshot["metrics"]), 11)
+        self.assertEqual(len(snapshot["metrics"]), 12)  # includes the Stage 4 LIVE gate row
         self.assertIn("RUNNING", snapshot["health_markdown"])
         self.assertEqual(snapshot["mode"], "PAPER")
+        from operations import risk_snapshot
+        risk = risk_snapshot()
+        self.assertEqual(risk["execution_mode"], "PAPER")
+        self.assertIn("live_allowed", risk)
+
+    def test_dashboard_builds_without_error(self):
+        """Regression: app.py must build its Blocks and wire every event.
+
+        A gr.DataFrame has no .click() event in Gradio 6, and binding one
+        crashed the Space at import time. Building the Blocks catches that
+        whole class of error without launching a server.
+        """
+        try:
+            import spaces  # noqa: F401  # provided by the HF Spaces runtime
+        except ImportError:
+            self.skipTest("spaces package not installed (HF Spaces runtime only)")
+        import app
+        self.assertGreaterEqual(len(app.demo.fns), 6)
+        keys = [row[0] for row in app.mode_rows()]
+        self.assertIn("effective_mode", keys)
+        self.assertIn("kill_switch", keys)
+        self.assertIn("live_gate_reason", keys)
 
     @staticmethod
     def signal(key):

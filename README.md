@@ -191,8 +191,86 @@ Hugging Face container files are ephemeral unless persistent storage is enabled.
 Run the repeatable v3 checks with:
 
 ```bash
-python -m unittest discover -s tests -v
+python Scripts/run_tests.py tests.test_confluence tests.test_data_pipeline tests.test_modes tests.test_v3
 ```
+
+## Strategy validation status (2026-09-29) — LIVE is not justified
+
+Walk-forward validation over deep, paginated Delta history (no keys, read-only)
+says the current confluence gate has **no gross edge**, so no amount of
+threshold tuning makes it tradable. Do not move `EXECUTION_MODE` to `LIVE`.
+
+| Sample | LTF/HTF | Bars | Trades | avg R (cost-free) | avg net P&L | Profit factor |
+|---|---|---|---|---|---|---|
+| 208 days | 15m / 1h | 20,000 | 1,409 | **+0.009** | −0.150% | 1.01 |
+| 499 days | 1h / 4h | 12,000 | 787 | **−0.025** | −0.206% | 0.96 |
+
+avg R of ±0.01–0.03 is zero, not a suppressed edge: round-trip cost is 0.158%
+(2 × 0.059% taker incl. GST + 2 × 0.02% slippage) and measured net is −0.150%,
+which implies gross ≈ +0.008%. Folds are now *consistent* (PF 0.91–1.17) — the
+wild 2.67 / 0.36 swing seen in the original 10-day / 1,000-bar sample was
+small-sample noise, and the earlier "positive gross P&L" reading did not survive
+a real sample.
+
+An information-coefficient scan (`Scripts/run_signal_diagnostic.py`, 11,750
+decisions) explains why. Spearman rank correlation of each signed component
+against forward return:
+
+| predictor | +4b | +16b | +48b |
+|---|---|---|---|
+| score_signed | −0.013 | −0.011 | −0.002 |
+| trend | +0.008 | +0.015 | −0.002 |
+| zone | +0.004 | −0.007 | +0.019 |
+| momentum | **−0.053** | **−0.051** | −0.007 |
+| volume | −0.029 | −0.024 | +0.002 |
+
+Every component is ≈ 0, and the strongest one — momentum — is **inverted**:
+on this sample it predicts the *opposite* direction (mean reversion scored as
+continuation). A weighted sum of four zero-information inputs, one of them
+mis-signed, cannot produce positive expectancy.
+
+The obvious "just flip the mis-signed component" rescue was tested and does not
+work (same 124-day window, ~871 trades, weights overridden via env):
+
+| Variant | avg R | avg net P&L |
+|---|---|---|
+| Baseline weights | +0.029 | −0.139% |
+| Invert `momentum` only | +0.004 | −0.153% |
+| Invert all four components | +0.029 | −0.139% |
+
+Inverting all four returns *identical* numbers because negating every weight
+flips each LONG into its mirror SHORT, and the ATR stop plus 2R target with
+symmetric costs are symmetric — so full inversion is a no-op by construction.
+Inverting `momentum` alone is actively worse. There is no sign typo to fix.
+
+Reproduce with:
+
+```bash
+python Scripts/run_walk_forward.py 15m 1h 20000     # caches history under output/
+python Scripts/run_walk_forward.py 1h 4h 12000
+python Scripts/run_signal_diagnostic.py 15m 12000
+```
+
+History is cached as CSV, so a re-run costs no API requests; pass `--fresh` to
+re-pull. Unmodelled: perpetual funding payments, and the stop-first intrabar
+assumption is conservative.
+
+### Corrections made while validating
+
+- **Page cap was self-imposed, not an API limit.** `MAX_CANDLE_LIMIT` was 1000,
+  which silently capped every backtest at ~10 days. The endpoint really caps at
+  4,000 bars/request and `start`/`end` paginate cleanly (13,000 bars stitched
+  with zero duplicate timestamps and zero gaps). `fetch_history()` now walks the
+  window backwards; 15m history reaches ~2 years, daily ~2.8 years.
+- **Fee was an unsourced guess.** `PAPER_FEE_PCT` was 0.10%/side. Delta's own
+  help article states maker 0.02% / taker 0.05% of notional, and 18% GST applies
+  to fees, so an honest taker fill is 0.059%/side. Correcting it improved
+  expectancy by 0.08%/trade and it is *still* negative.
+- **The simulator was O(n·m)** (`htf[htf.index < ts]` per bar), so it physically
+  could not run past a few thousand bars. `np.searchsorted` replaced the mask;
+  `test_htf_window_matches_strictly_before_mask` pins the equivalence.
+
+OpenAlgo is still not implemented.
 
 ## v3 paper execution and OpenAlgo guard
 

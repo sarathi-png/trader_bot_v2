@@ -1,10 +1,12 @@
 """
 Market data streaming and candle fetching.
 
-Primary source: yfinance for every symbol (crypto, stocks, forex).
-HuggingFace Spaces blocks Binance with HTTP 451 in the hosting region,
-so the CCXT path is only an optional fallback used when the configured
-exchange is a real CCXT exchange and yfinance failed.
+Stage 1 source order: Delta Exchange India public REST for crypto pairs
+when DATA_SOURCE=DELTA (real exchange candles, no yfinance lag), then
+yfinance for every symbol (crypto fallback, stocks, forex). HuggingFace
+Spaces blocks Binance with HTTP 451 in the hosting region, so the CCXT
+path is only an optional fallback used when the configured exchange is a
+real CCXT exchange and yfinance failed.
 
 Contract for every returned frame:
     - columns: [open, high, low, close, volume] (numeric)
@@ -19,6 +21,10 @@ from typing import Optional
 import pandas as pd
 
 import ccxt
+
+from config.settings import DATA_SOURCE
+from data.delta_client import get_delta_client, resolve_delta_symbol
+from data.quality import tf_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -239,37 +245,86 @@ def _fetch_ccxt_candles(
         return _empty_frame()
 
 
+def _drop_forming_candle(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Remove the still-forming candle so only closed bars are analysed."""
+    if df.empty:
+        return df
+    last_open = df.index[-1]
+    if getattr(last_open, "tzinfo", None) is None:
+        last_open = last_open.tz_localize("UTC")
+    age = (pd.Timestamp.now(tz="UTC") - last_open).total_seconds()
+    if age < tf_to_seconds(timeframe):
+        return df.iloc[:-1]
+    return df
+
+
+def _finalize(df: pd.DataFrame, source: str, timeframe: str,
+              confirm_only: bool) -> pd.DataFrame:
+    """Tag the frame with its data source and optionally drop the forming bar."""
+    if confirm_only:
+        df = _drop_forming_candle(df, timeframe)
+    df.attrs["data_source"] = source
+    return df
+
+
 def fetch_recent_candles(
     symbol: str,
     timeframe: str = "15m",
     limit: int = 200,
     exchange_name: str = "yahoo",
+    confirm_only: bool = False,
 ) -> pd.DataFrame:
-    """Fetch recent OHLCV candles for a given symbol.
+    """Fetch recent OHLCV candles, preferring Delta Exchange for crypto.
 
-    yfinance is tried first for every symbol, crypto included: it works
-    from HuggingFace Spaces where Binance answers HTTP 451. When
-    yfinance fails and `exchange_name` is a real CCXT exchange, the
-    CCXT path is used as a fallback.
+    Source order:
+      1. Delta India public REST when DATA_SOURCE=DELTA and the symbol maps
+         to a listed Delta perpetual (real exchange candles; logged as
+         DEGRADED when the feed is empty or errors out).
+      2. yfinance for everything else, or as the crypto fallback.
+      3. CCXT only when exchange_name names a real CCXT exchange.
 
     Args:
         symbol: Trading pair symbol (e.g. 'BTC/USDT', 'AAPL', 'EURUSD=X')
         timeframe: Candle timeframe ('1m', '5m', '15m', '1h', '4h', '1d')
         limit: Number of candles to fetch (default 200)
         exchange_name: Data source hint; 'yahoo' disables the CCXT fallback
+        confirm_only: Drop the still-forming last candle from the result
 
     Returns:
         DataFrame with [open, high, low, close, volume] and a UTC
         DatetimeIndex named "datetime"; empty frame on total failure.
+        df.attrs["data_source"] records 'delta' | 'yahoo' | 'ccxt'.
     """
+    dsym = resolve_delta_symbol(symbol) if DATA_SOURCE == "DELTA" else None
+    if dsym:
+        try:
+            client = get_delta_client()
+            if client.is_listed(dsym):
+                df = client.fetch_candles(dsym, timeframe, limit)
+                if not df.empty:
+                    return _finalize(df, "delta", timeframe, confirm_only)
+        except Exception as exc:
+            logger.warning(
+                "[Streamer] Delta fetch failed for %s (%s, %s): %s",
+                symbol, timeframe, exc,
+            )
+        logger.warning(
+            "[Streamer] Delta data unavailable for %s %s — falling back to "
+            "yfinance (DEGRADED)",
+            symbol, timeframe,
+        )
+
     df = _fetch_yfinance_candles(symbol, timeframe, limit)
     if not df.empty:
-        return df
+        return _finalize(df, "yahoo", timeframe, confirm_only)
 
     if str(exchange_name).lower() in ("yahoo", "yfinance", "yf"):
         return _empty_frame()
 
     logger.info("[Streamer] Falling back to CCXT (%s) for %s", exchange_name, symbol)
-    return _fetch_ccxt_candles(symbol, timeframe, limit, exchange_name)
+    df = _fetch_ccxt_candles(symbol, timeframe, limit, exchange_name)
+    if df.empty:
+        return df
+    return _finalize(df, "ccxt", timeframe, confirm_only)
 
 

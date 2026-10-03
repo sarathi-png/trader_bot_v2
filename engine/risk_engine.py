@@ -56,6 +56,20 @@ def calc_sl_tp(
     if current_atr <= 0:
         raise ValueError(f"ATR value must be positive, got {current_atr}")
 
+    # pandas coerces a missing zone to NaN, and `nan is not None` is True, so a
+    # NaN level would silently poison every comparison below. Treat NaN as absent.
+    def usable(level):
+        if level is None:
+            return None
+        try:
+            value = float(level)
+        except (TypeError, ValueError):
+            return None
+        return None if np.isnan(value) else value
+
+    htf_support = usable(htf_support)
+    htf_resistance = usable(htf_resistance)
+
     result = {
         "entry": entry_price,
         "sl": 0.0,
@@ -71,8 +85,10 @@ def calc_sl_tp(
         # Long: SL below entry
         raw_sl = entry_price - (atr_mult * current_atr)
 
-        # Cap at HTF support (don't go below support)
-        if htf_support is not None and raw_sl < htf_support:
+        # Cap at HTF support, but only when support is genuinely below entry.
+        # A support at or above entry would put the stop on the wrong side of
+        # the trade and yield zero or negative risk.
+        if htf_support is not None and raw_sl < htf_support and htf_support < entry_price:
             raw_sl = htf_support
 
         sl = raw_sl
@@ -80,17 +96,21 @@ def calc_sl_tp(
         reward = min_rrr * risk
         tp = entry_price + reward
 
-        # Cap TP at HTF resistance
-        if htf_resistance is not None and tp > htf_resistance:
-            tp = htf_resistance
-            reward = tp - entry_price
+        # Cap TP at HTF resistance only if it still clears the minimum RRR.
+        # A resistance barely above entry (price sitting on the level) would
+        # otherwise collapse the target to ~0 and discard a valid setup.
+        if htf_resistance is not None and tp > htf_resistance > entry_price:
+            capped_reward = htf_resistance - entry_price
+            if capped_reward >= min_rrr * risk:
+                tp = htf_resistance
+                reward = capped_reward
 
     elif trend == "short":
         # Short: SL above entry
         raw_sl = entry_price + (atr_mult * current_atr)
 
-        # Cap at HTF resistance (don't go above resistance)
-        if htf_resistance is not None and raw_sl > htf_resistance:
+        # Cap at HTF resistance, but only when resistance is genuinely above entry.
+        if htf_resistance is not None and raw_sl > htf_resistance and htf_resistance > entry_price:
             raw_sl = htf_resistance
 
         sl = raw_sl
@@ -98,10 +118,11 @@ def calc_sl_tp(
         reward = min_rrr * risk
         tp = entry_price - reward
 
-        # Cap TP at HTF support
-        if htf_support is not None and tp < htf_support:
-            tp = htf_support
-            reward = entry_price - tp
+        if htf_support is not None and tp < htf_support < entry_price:
+            capped_reward = entry_price - htf_support
+            if capped_reward >= min_rrr * risk:
+                tp = htf_support
+                reward = capped_reward
 
     else:
         raise ValueError(f"Invalid trend '{trend}'. Must be 'long' or 'short'.")

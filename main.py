@@ -59,6 +59,21 @@ from execution.paper_engine import PaperBroker
 from execution.modes import ExecutionMode, effective_mode
 from storage import get_store
 
+
+def _opt_float(value):
+    """Normalise a zone level to a float, or None when it does not exist.
+
+    find_nearest_zones leaves None where no zone sits on the correct side of
+    price, and pandas coerces that to NaN inside a float column. Because
+    `nan is not None` is True, a NaN slips past `is not None` checks and then
+    poisons every comparison it touches.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if np.isnan(number) else number
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -153,8 +168,8 @@ def analyze_symbol(
     # ─── Step 4: Find S/R zones on LTF ───────────────────────────────────
     df_ltf = find_nearest_zones(df_ltf, n=N_SWING, tolerance_pct=ZONE_TOLERANCE_PCT)
 
-    nearest_support = df_ltf["nearest_support"].iloc[-1]
-    nearest_resistance = df_ltf["nearest_resistance"].iloc[-1]
+    nearest_support = _opt_float(df_ltf["nearest_support"].iloc[-1])
+    nearest_resistance = _opt_float(df_ltf["nearest_resistance"].iloc[-1])
 
     logger.info(f"  Support: {nearest_support}, Resistance: {nearest_resistance}")
 
@@ -162,8 +177,8 @@ def analyze_symbol(
     df_htf_swings = find_swing_high_low(df_htf, n=N_SWING)
     htf_trend = get_trend_direction(df_htf_swings, n_swings=N_SWING)
     df_htf_zones = find_nearest_zones(df_htf, n=N_SWING, tolerance_pct=ZONE_TOLERANCE_PCT)
-    htf_support = df_htf_zones["nearest_support"].iloc[-1]
-    htf_resistance = df_htf_zones["nearest_resistance"].iloc[-1]
+    htf_support = _opt_float(df_htf_zones["nearest_support"].iloc[-1])
+    htf_resistance = _opt_float(df_htf_zones["nearest_resistance"].iloc[-1])
     logger.info(f"  HTF Trend: {htf_trend}; zones: {htf_support}, {htf_resistance}")
 
     # ─── Step 6: Generate signal ─────────────────────────────────────────

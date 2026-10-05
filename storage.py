@@ -87,6 +87,50 @@ class Store:
             daily=c.execute('SELECT realized_pnl FROM daily_risk WHERE day=?',(day,)).fetchone()
             states={r['key']:r['value'] for r in c.execute('SELECT key,value FROM app_state').fetchall()}
             return {'last_run':dict(last) if last else None,'signal_count':c.execute('SELECT COUNT(*) FROM signals').fetchone()[0],'open_positions':c.execute("SELECT COUNT(*) FROM positions WHERE status='OPEN'").fetchone()[0],'daily_pnl':float(daily[0]) if daily else 0.0,'db':self.path,'state':states}
+    def sync_to_dataset(self):
+        """Best-effort persistence sync to a Hugging Face Dataset repo.
+
+        The Space keeps its SQLite DB + charts on ephemeral disk; pushing
+        them to a free Dataset repo after each scan cycle lets history
+        survive restarts. No-op unless HF_SYNC_DATASET is set (and the
+        huggingface_hub package + HF_TOKEN are available). Never raises:
+        sync failures must not break the scan cycle.
+        """
+        import os
+        repo = os.getenv("HF_SYNC_DATASET", "").strip()
+        if not repo:
+            return {"synced": False, "reason": "HF_SYNC_DATASET not set"}
+        try:
+            from huggingface_hub import HfApi
+        except Exception as exc:
+            return {"synced": False, "reason": "huggingface_hub missing: %s" % exc}
+        token = os.getenv("HF_TOKEN", "")
+        if not token:
+            return {"synced": False, "reason": "HF_TOKEN not set"}
+        try:
+            api = HfApi(token=token)
+            db = Path(self.path)
+            if db.is_file():
+                api.upload_file(path_or_fileobj=str(db), path_in_repo=db.name,
+                                repo_id=repo, repo_type="dataset")
+            charts = db.parent / "charts"
+            if charts.is_dir():
+                files = sorted(charts.glob("*.png"))[-20:]
+                for f in files:
+                    api.upload_file(path_or_fileobj=str(f),
+                                    path_in_repo="charts/%s" % f.name,
+                                    repo_id=repo, repo_type="dataset")
+            try:
+                from config.settings import OUTPUT_DIR
+                meta = OUTPUT_DIR / "meta_model.json"
+                if meta.is_file():
+                    api.upload_file(path_or_fileobj=str(meta), path_in_repo=meta.name,
+                                    repo_id=repo, repo_type="dataset")
+            except Exception:
+                pass
+            return {"synced": True, "repo": repo}
+        except Exception as exc:
+            return {"synced": False, "reason": str(exc)[:200]}
 _GLOBAL_STORE=None
 def get_store(path=None):
     global _GLOBAL_STORE

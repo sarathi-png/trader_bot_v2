@@ -52,6 +52,7 @@ from engine.sr_zones import find_swing_high_low, cluster_zones, find_nearest_zon
 from engine.trendlines import get_trend_direction
 from engine.risk_engine import calc_sl_tp, calc_position_size, validate_rrr
 from engine.confluence import analyze_confluence, gate_signal
+from engine.meta_gate import gate_with_meta, model_available
 from charting.plotter import generate_signal_chart
 from alerts.telegram import send_telegram_signal, format_signal_caption
 from execution.broker import paper_order_stub
@@ -232,8 +233,24 @@ def analyze_symbol(
         + " | ".join(confluence.reasons)
     )
     if not passed:
-        logger.info(f"  Signal dropped by confluence gate: {gate_note}")
+        logger.info("Signal dropped by confluence gate")
         return None
+
+    # Tier-3 meta-model veto (inert when output/meta_model.* is absent).
+    if model_available():
+        try:
+            from ml4t.features import FEATURE_COLUMNS, build_features
+            feat_frame = build_features(df_ltf)
+            if len(feat_frame):
+                last = feat_frame[FEATURE_COLUMNS].iloc[-1].to_numpy(float)
+                if np.isfinite(last).all():
+                    ok, meta_reason = gate_with_meta(last)
+                    signal["meta_reason"] = meta_reason
+                    if not ok:
+                        logger.info("Signal from %s rejected: %s", symbol, meta_reason)
+                        return None
+        except Exception as exc:
+            logger.warning("meta gate skipped for %s: %s", symbol, exc)
 
     # ─── Step 7: Calculate SL/TP ─────────────────────────────────────────
     sl_tp = calc_sl_tp(
@@ -401,6 +418,12 @@ def run_analysis_once() -> list:
             errors += 1; logger.exception("Error analyzing %s", ticker); details.append({"symbol": ticker, "result": "ERROR", "error": str(exc)})
     store.finish_run(run_id, ok, len(signals), errors, {"details": details})
     logger.info("Analysis complete: analyzed=%s signals=%s errors=%s", ok, len(signals), errors)
+    try:
+        sync = store.sync_to_dataset()
+        if sync.get("synced"):
+            logger.info("Dataset sync ok -> %s", sync.get("repo"))
+    except Exception as exc:
+        logger.warning("Dataset sync skipped: %s", exc)
     return signals
 
 

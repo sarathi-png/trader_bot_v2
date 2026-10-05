@@ -9,3 +9,14 @@ numpy>=1.24.0
 # and crashes with modern starlette/jinja2 ("TypeError: unhashable type: 'dict'").
 gradio==6.15.1
 yfinance>=1.0.0
+# ─── Tier-3 ML (all optional at runtime; backend auto-falls back) ───────────
+# Free + license-clean: LightGBM (MIT), Optuna (MIT), hmmlearn (BSD-3),
+# scikit-learn (BSD-3), scipy (BSD-3). The Space runs fine without them
+# (numpy-logistic fallback) but training quality is best with them present.
+lightgbm>=4.0.0
+optuna>=3.0.0
+hmmlearn>=0.3.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+huggingface_hub>=0.20.0
+

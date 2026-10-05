@@ -1,4 +1,4 @@
-﻿"""
+"""
 Technical indicators for signal generation.
 Pure pandas/numpy implementations — no external TA library required.
 All indicators use rolling windows only — no forward-looking bias.
@@ -76,9 +76,15 @@ def ma_cross(
         result["ma_fast"] = result["close"].rolling(window=fast_period).mean()
         result["ma_slow"] = result["close"].rolling(window=slow_period).mean()
 
-    # Detect crossover
-    fast_above_slow = result["ma_fast"] > result["ma_slow"]
-    prev_fast_above = fast_above_slow.shift(1)
+    # Detect crossover (NaN-safe: warmup rows have no MA yet; fill so the
+    # boolean mask never contains NA, which breaks `~` on pandas 3.x).
+    fast_above_slow = (result["ma_fast"] > result["ma_slow"]).fillna(False)
+    # NOTE: .shift(1) on a bool Series yields OBJECT dtype once an NA is
+    # introduced, and `~` on object dtype applies Python's invert (True -> -2,
+    # False -> -1), which is always truthy. That made every bar with
+    # fast > slow register as a "bullish cross" (150 signals in 300 bars).
+    # Cast back to bool so the mask really is a one-bar crossover.
+    prev_fast_above = fast_above_slow.shift(1).fillna(False).astype(bool)
 
     result["ma_cross_signal"] = 0
     result.loc[fast_above_slow & ~prev_fast_above, "ma_cross_signal"] = 1   # Bullish

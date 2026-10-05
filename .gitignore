@@ -37,3 +37,5 @@ tsc2.log
 # Local run artifacts (logs, compiled tests, parity scripts output)
 output/
 
+.vercel
+.env*

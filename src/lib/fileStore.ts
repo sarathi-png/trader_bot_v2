@@ -16,9 +16,10 @@
  *     degrades to the caller's fallback value rather than breaking a request
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-const ROOT = process.env.TC_DATA_DIR
+let ROOT = process.env.TC_DATA_DIR
   ? path.resolve(process.env.TC_DATA_DIR)
   : path.join(process.cwd(), "data");
 
@@ -58,6 +59,20 @@ function ensureDir(): boolean {
     fs.mkdirSync(ROOT, { recursive: true });
     return true;
   } catch {
+    // Serverless hosts (Vercel, Netlify) mount the deployment directory
+    // READ-ONLY; only /tmp is writable there. Fall back once so the store
+    // keeps serving for the lifetime of the instance instead of failing
+    // every request. An explicit TC_DATA_DIR always wins, no fallback.
+    if (!process.env.TC_DATA_DIR && !ROOT.startsWith(os.tmpdir())) {
+      try {
+        ROOT = path.join(os.tmpdir(), "trading-command-v3-data");
+        cache.clear();
+        fs.mkdirSync(ROOT, { recursive: true });
+        return true;
+      } catch {
+        return false;
+      }
+    }
     return false;
   }
 }

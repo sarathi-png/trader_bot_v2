@@ -224,7 +224,14 @@ export async function getDeltaSummary(): Promise<DeltaSummary> {
     ]);
 
     if (balRes.status !== 200) {
-      return { ...base, error: `Delta balances unavailable (HTTP ${balRes.status})` };
+      const detail =
+        ((balRes.json as { error?: { message?: string } } | null)?.error?.message ?? "")
+          .replace(/api[- ]?key|signature|secret/gi, "*")
+          .slice(0, 80);
+      return {
+        ...base,
+        error: `Delta balances unavailable (HTTP ${balRes.status})${detail ? `: ${detail}` : ""}`,
+      };
     }
 
     const balances = (resultOf(balRes.json) as BalanceRow[])

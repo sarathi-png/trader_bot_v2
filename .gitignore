@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Secrets — never commit. Holds DELTA_API_KEY/SECRET, API_PASSWORD, SESSION_SECRET.
+.env
+.env.local
+.env*.local
+
+# Build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local file-backed store (runtime data, see src/lib/fileStore.ts)
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/scratch artefacts from the local verification run
+checkrisk.out
+checkauth.out
+tsc.log
+tsc2.log
+# Local run artifacts (logs, compiled tests, parity scripts output)
+output/
+

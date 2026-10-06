@@ -1,0 +1,47 @@
+# Port trader_bot_v2 signal intelligence into trading-command-center
+
+## Source (READ ONLY — never edit): D:\Projects\trader_bot_v2
+## Target (edit here): C:\tc\trading-command-center
+## Stack: Next.js 16 + React 19 + TypeScript + drizzle/postgres + tailwind. Verify with `npm run typecheck` and `npm run build`.
+
+## Goal
+Port the proven Python signal-intelligence stack into the Next.js terminal so its Strategy/Signals pages use the same (or better) logic as the Python bot. No Python runtime, no new native deps. Training stays in Python; only inference + diagnostics move to TS.
+
+## Source modules to read first (in this order)
+1. D:\Projects\trader_bot_v2\engine\indicators.py — Wilder ATR-14, Wilder RSI-14, SMA 9/21 ma_cross (note the pandas-3 NaN-mask fix: fillna(False) before `~`)
+2. D:\Projects\trader_bot_v2\engine\sr_zones.py — swing high/low (N_SWING=5), zone clustering (0.3% tolerance), nearest support/resistance
+3. D:\Projects\trader_bot_v2\engine\trendlines.py — get_trend_direction
+4. D:\Projects\trader_bot_v2\engine\confluence.py — 4 components (trend/zone/momentum/volume), weights 0.35/0.25/0.25/0.15, score=50*(1+net), direction threshold 0.15, gate_signal with opposite-veto + min_score 55
+5. D:\Projects\trader_bot_v2\engine\risk_engine.py — ATR SL/TP (1.5x, RRR≥2.0), position sizing, RRR validation
+6. D:\Projects\trader_bot_v2\ml4t\features.py — 18 causal features (atr_norm, rsi_14, rsi_dist50, ema_fast/slow, ema_gap_atr, ma_fast/slow, ma_gap_atr, ma_cross, dist_support/resist_atr, wick_reject, trend_slope_atr, vol_ratio, ret_1, ret_4, range_atr). Every row i uses only candles ≤ i.
+7. D:\Projects\trader_bot_v2\ml4t\labeling.py — per-side triple-barrier labels (stop 1.5xATR, profit 2R, max_hold 48, costs 0.059% fee + 0.02% slippage per side, stop-first on same-bar hits)
+8. D:\Projects\trader_bot_v2\ml4t\regime.py — HMM trend-vs-range with volatility-median fallback (implement the FALLBACK in TS, not hmmlearn)
+9. D:\Projects\trader_bot_v2\ml4t\diagnostic_part1.py + diagnostic_part2.py — Spearman IC (tie-averaged ranks, no scipy), Newey-West HAC SE + t-stat, BH-FDR @10%, quantile spreads, Deflated Sharpe Ratio, CSCV-PBO
+10. D:\Projects\trader_bot_v2\ml4t\purged_cv.py — purged walk-forward splits with embargo
+11. D:\Projects\trader_bot_v2\ml4t\nblogistic.py — NumpyLogistic (weights w, bias b, standardisation mu/sd, sigmoid). THIS is the inference model to port.
+12. D:\Projects\trader_bot_v2\backtest\walk_forward.py — event-driven simulator: entry next-bar open, stop-first intrabar, one position at a time, time-stop 48 bars, chronological folds + threshold sweep
+13. D:\Projects\trader_bot_v2\output\meta_model.json — trained weights reference (features list, barrier config). Load equivalent JSON from env/public config at runtime.
+
+## What to build (target files, all new unless noted)
+- src/lib/strategy/indicators.ts — atr(), rsi(), maCross() pure functions on Candle[] (oldest→newest), NaN-safe warmup
+- src/lib/strategy/zones.ts — swings, clusterZones, nearestZones (mirror Python exactly, incl. constants)
+- src/lib/strategy/confluence.ts — trend/zone/momentum/volume components + analyzeConfluence() + gateSignal() with same weights/thresholds; expose per-component values for UI
+- src/lib/strategy/features.ts — buildFeatures(candles) → 18-feature vector, causal, tail row usable live
+- src/lib/strategy/metaModel.ts — load weights JSON {w,b,mu,sd,features}, predictProba(), gateWithMeta(prob, minProb default 0.5, env META_MODEL_MIN_PROB)
+- src/lib/strategy/regime.ts — volatility-regime fallback (rolling-20 std vs median) returning 'trend'|'range'
+- src/lib/strategy/diagnostics.ts — spearmanIC, neweyWestSE, hacT, bhFdr, quantileSpread, deflatedSharpe, pboScore (pure, unit-testable)
+- src/lib/strategy/walkForward.ts — simulator + folds + threshold sweep producing the same report shape as Python
+- Extend src/app/api/strategy/evaluate/route.ts — accept candles or symbol+timeframe, return { confluence, components, features, metaProba, regime, gateDecision, reasons }
+- Extend src/app/api/signals/route.ts — include confluence score, component breakdown, meta probability on stored signals
+- Strategy page (src/app/strategy/page.tsx) — show component bars, meta probability meter, regime badge, IC/diagnostic summary; keep existing 3 rule strategies as "classic" tab, add new "quant" tab (do not delete classic)
+- Add unit tests for every pure function (indicators, confluence, features, diagnostics) with golden values cross-checked against Python output on the same fixture candles
+
+## Constraints
+- Zero new native/binary npm deps. Only pure TS.
+- No look-ahead: every feature/indicator at index i reads candles[0..i] only. Add a test asserting this (shift fixture by one bar → output changes only at tail).
+- Costs mirror Python: 0.059% fee + 0.02% slippage per side, stop-first fills.
+- Keep existing demo/delta market service, paper engine, journal, auth untouched. New code must not break `npm run typecheck` / `npm run build` / `npm run lint`.
+- Cross-check rule: pick 200 consecutive demo candles, compute confluence+features in both Python and TS, assert max abs diff < 1e-6. Document the check.
+
+## Definition of done
+`npm run typecheck` + `npm run build` pass; new unit tests green; Strategy page quant tab shows live confluence + meta probability on demo and Delta candles; diagnostics panel renders IC/HAC/FDR/DSR/PBO from walkForward.ts.

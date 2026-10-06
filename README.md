@@ -109,6 +109,16 @@ trading-bot-v2/
 └── README.md                # This file
 ```
 
+## Trading Command web dashboard
+
+The separate Next.js trading dashboard is in [`trading-command-v3/`](./trading-command-v3/).
+It is a standalone web application alongside the Python bot; it does not replace
+the Hugging Face Spaces Gradio app in the repository root. To deploy the web
+dashboard through Vercel from this repository, set the Vercel project's **Root
+Directory** to `trading-command-v3`. Configure its environment variables and
+database separately; the dashboard does not automatically share the Python
+bot's runtime, secrets, or storage.
+
 ## Deployment Notes (HuggingFace Space)
 
 The Space runs on **ZeroGPU (`zero-a10g`)**, the only hosting tier available to

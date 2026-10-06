@@ -1,0 +1,31 @@
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app_db
+      DELTA_API_KEY: ${DELTA_API_KEY:-}
+      DELTA_API_SECRET: ${DELTA_API_SECRET:-}
+      LIVE_EXECUTION_ENABLED: "false"
+      PAPER_TRADING_ENABLED: "true"
+      TRADINGVIEW_WEBHOOK_ENABLED: "false"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Intentionally not exposed to the host/internet.
+    expose:
+      - "5432"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

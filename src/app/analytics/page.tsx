@@ -12,6 +12,14 @@ interface Row extends Omit<JournalEntry, "openedAt" | "closedAt"> {
   closedAt: string | null;
 }
 
+function cumulativePnl(entries: Row[]): number[] {
+  let balance = 0;
+  return entries.map((entry) => {
+    balance += entry.pnl;
+    return balance;
+  });
+}
+
 export default function AnalyticsPage() {
   const { data, loading } = usePoll(() => api.get<{ entries: Row[] }>("/api/journal"), 60000);
 
@@ -30,10 +38,7 @@ export default function AnalyticsPage() {
     ? closed.reduce((a, e) => a + (new Date(e.closedAt as string).getTime() - new Date(e.openedAt).getTime()), 0) / closed.length
     : 0;
 
-  const equity = useMemo(() => {
-    let bal = 0;
-    return closed.map((e) => (bal += e.pnl));
-  }, [closed]);
+  const equity = useMemo(() => cumulativePnl(closed), [closed]);
 
   const daily = useMemo(() => {
     const map = new Map<string, number>();

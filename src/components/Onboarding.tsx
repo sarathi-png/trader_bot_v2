@@ -9,6 +9,16 @@ import type { ExecMode, LayoutPreset } from "@/lib/types";
 
 const SYMBOLS = ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD"];
 
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="slide-in">
+      <p className="microlabel">STEP {n} / 5</p>
+      <h2 className="text-lg font-semibold mt-1 mb-4">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
 export default function Onboarding({ capabilities }: {
   capabilities: { liveExecution: boolean; deltaAccountConfigured: boolean };
 }) {
@@ -31,14 +41,6 @@ export default function Onboarding({ capabilities }: {
     if (res?.settings) applySettings(res.settings);
     else await patchSettings({ onboarded: true, mode, layout, modules, watchlist });
   };
-
-  const Step = ({ n, title, children }: { n: number; title: string; children: React.ReactNode }) => (
-    <div className="slide-in">
-      <p className="microlabel">STEP {n} / 5</p>
-      <h2 className="text-lg font-semibold mt-1 mb-4">{title}</h2>
-      {children}
-    </div>
-  );
 
   return (
     <div className="fixed inset-0 z-120 bg-bg grid-bg flex items-center justify-center p-4">

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { KeyRound, ShieldAlert } from "lucide-react";
 import { Btn, Chip, Input, Panel, Select, StatusDot, Toggle, useConfirm } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -22,6 +22,18 @@ const MODULE_LABELS: Record<string, string> = {
   risk: "Risk calculator", alerts: "Alert widgets", systemStatus: "System status", apiStatus: "API status",
   latency: "Latency readout", journal: "Journal", analytics: "Analytics",
 };
+
+function subscribeToOrigin(): () => void {
+  return () => {};
+}
+
+function getBrowserOrigin(): string {
+  return window.location.origin;
+}
+
+function getServerOrigin(): string {
+  return "";
+}
 
 export default function SettingsPage() {
   const { settings, patchSettings, applySettings, applyLayoutPreset, system, notify } = useApp();
@@ -483,8 +495,7 @@ function TradingViewPanel({ enabled, secret, webhookEnv, onToggle, onSecret }: {
   onSecret: (v: string) => void;
 }) {
   const { notify } = useApp();
-  const [origin, setOrigin] = useState("");
-  useEffect(() => { setOrigin(window.location.origin); }, []);
+  const origin = useSyncExternalStore(subscribeToOrigin, getBrowserOrigin, getServerOrigin);
 
   const active = enabled || webhookEnv;
   const webhookUrl = `${origin}/api/integrations/tradingview/webhook`;

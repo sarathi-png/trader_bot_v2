@@ -11,7 +11,9 @@ export function usePoll<T>(
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const fetchRef = useRef(fetcher);
-  fetchRef.current = fetcher;
+  useEffect(() => {
+    fetchRef.current = fetcher;
+  }, [fetcher]);
   const enabled = opts?.enabled !== false;
 
   const run = useCallback(async () => {

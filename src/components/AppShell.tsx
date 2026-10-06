@@ -268,7 +268,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </div>
       <StatusBar />
       <MobileNav />
-      <CommandPalette />
+      {paletteOpen && <CommandPalette />}
       <HelpModal open={helpOpen} onClose={() => setHelp(false)} />
       <NotificationCenter />
     </div>

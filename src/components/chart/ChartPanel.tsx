@@ -47,6 +47,7 @@ export default function ChartPanel({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState<Candle | null>(null);
+  const [lastCandle, setLastCandle] = useState<Candle | null>(null);
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [tool, setTool] = useState<Tool>("cursor");
   const [color, setColor] = useState(COLORS[0]);
@@ -62,13 +63,9 @@ export default function ChartPanel({
   const linesRef = useRef<IPriceLine[]>([]);
   const candlesRef = useRef<Candle[]>([]);
   const drawingsRef = useRef<Drawing[]>(drawings);
-  drawingsRef.current = drawings;
   const toolRef = useRef<Tool>(tool);
-  toolRef.current = tool;
   const colorRef = useRef(color);
-  colorRef.current = color;
   const selectedRef = useRef<string | null>(selectedId);
-  selectedRef.current = selectedId;
   const draftRef = useRef<Drawing | null>(null);
   const lwcRef = useRef<typeof import("lightweight-charts") | null>(null);
   const redrawTimer = useRef<number | null>(null);
@@ -80,6 +77,26 @@ export default function ChartPanel({
       layerRef.current?.render(drawingsRef.current, draftRef.current, selectedRef.current);
     });
   }, []);
+
+  useEffect(() => {
+    drawingsRef.current = drawings;
+    toolRef.current = tool;
+    colorRef.current = color;
+    selectedRef.current = selectedId;
+  }, [drawings, tool, color, selectedId]);
+
+  const applyCandles = useCallback((candles: Candle[]) => {
+    const series = seriesRef.current as unknown as import("lightweight-charts").ISeriesApi<"Candlestick"> | null;
+    const vol = volRef.current as unknown as import("lightweight-charts").ISeriesApi<"Histogram"> | null;
+    if (!series || !vol) return;
+    series.setData(candles.map((c) => ({ time: c.time as never, open: c.open, high: c.high, low: c.low, close: c.close })));
+    vol.setData(candles.map((c) => ({
+      time: c.time as never,
+      value: c.volume,
+      color: c.close >= c.open ? "rgba(47,211,136,0.25)" : "rgba(240,82,79,0.25)",
+    })));
+    redraw();
+  }, [redraw]);
 
   /* ---------------- chart init ---------------- */
   useEffect(() => {
@@ -153,6 +170,7 @@ export default function ChartPanel({
         );
         if (stop) return;
         candlesRef.current = res.candles;
+        setLastCandle(res.candles.at(-1) ?? null);
         applyCandles(res.candles);
         setError(res.source === "demo" && settings.dataSource === "delta"
           ? "Delta candles unavailable — showing demo data (labelled)."
@@ -164,21 +182,7 @@ export default function ChartPanel({
     void load();
     const id = setInterval(() => void load(), 5000);
     return () => { stop = true; clearInterval(id); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, symbol, timeframe]);
-
-  const applyCandles = (candles: Candle[]) => {
-    const series = seriesRef.current as unknown as import("lightweight-charts").ISeriesApi<"Candlestick"> | null;
-    const vol = volRef.current as unknown as import("lightweight-charts").ISeriesApi<"Histogram"> | null;
-    if (!series || !vol) return;
-    series.setData(candles.map((c) => ({ time: c.time as never, open: c.open, high: c.high, low: c.low, close: c.close })));
-    vol.setData(candles.map((c) => ({
-      time: c.time as never,
-      value: c.volume,
-      color: c.close >= c.open ? "rgba(47,211,136,0.25)" : "rgba(240,82,79,0.25)",
-    })));
-    redraw();
-  };
+  }, [ready, symbol, timeframe, applyCandles, settings.dataSource]);
 
   /* ---------------- drawings load ---------------- */
   useEffect(() => {
@@ -353,7 +357,7 @@ export default function ChartPanel({
       window.addEventListener("pointerup", onUp);
     };
 
-    const startDrag = (hit: HitResult, startPx: number, startPy: number) => {
+    function startDrag(hit: HitResult, startPx: number, startPy: number) {
       const L = layer();
       if (!L) return;
       const orig = drawingsRef.current.find((d) => d.id === hit.id);
@@ -395,7 +399,7 @@ export default function ChartPanel({
       };
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
-    };
+    }
 
     const onHoverMove = (e: PointerEvent) => {
       if (toolRef.current !== "cursor") return;
@@ -415,35 +419,37 @@ export default function ChartPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, interactive]);
 
-  const setDrawingsLive = (id: string, points: { time: number; price: number }[]) => {
+  function setDrawingsLive(id: string, points: { time: number; price: number }[]) {
     setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, points } : d)));
-  };
+  }
 
-  const baseDrawing = (type: DrawingType, points: Drawing["points"]): Drawing => ({
-    symbol, timeframe, layout: "default", type, points,
-    color: colorRef.current, width: 2, opacity: 1,
-    locked: false, hidden: false, label: "", note: "",
-  });
+  function baseDrawing(type: DrawingType, points: Drawing["points"]): Drawing {
+    return {
+      symbol, timeframe, layout: "default", type, points,
+      color: colorRef.current, width: 2, opacity: 1,
+      locked: false, hidden: false, label: "", note: "",
+    };
+  }
 
-  const commitDrawing = async (partial: { type: DrawingType; points: Drawing["points"]; label: string }) => {
+  async function commitDrawing(partial: { type: DrawingType; points: Drawing["points"]; label: string }) {
     const d = baseDrawing(partial.type, partial.points);
     d.label = partial.label;
     try {
       const res = await api.post<{ drawing: Drawing }>("/api/drawings", d);
       setDrawings((prev) => [...prev, res.drawing]);
     } catch { /* transient — object stays local until reload */ }
-  };
+  }
 
-  const deleteDrawing = async (id: string) => {
+  async function deleteDrawing(id: string) {
     setDrawings((prev) => prev.filter((d) => d.id !== id));
     if (selectedId === id) setSelectedId(null);
     await api.del(`/api/drawings?id=${id}`).catch(() => undefined);
-  };
+  }
 
-  const patchDrawing = async (id: string, patch: Partial<Drawing>) => {
+  async function patchDrawing(id: string, patch: Partial<Drawing>) {
     setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
     await api.patch("/api/drawings", { id, ...patch }).catch(() => undefined);
-  };
+  }
 
   // Delete key removes the selected object
   useEffect(() => {
@@ -458,8 +464,7 @@ export default function ChartPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const last = candlesRef.current[candlesRef.current.length - 1];
-  const shown = hover ?? last;
+  const shown = hover ?? lastCandle;
 
   return (
     <div className={cx("flex min-h-0 h-full", className)}>

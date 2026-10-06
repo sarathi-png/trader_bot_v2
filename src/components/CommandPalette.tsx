@@ -83,14 +83,9 @@ export default function CommandPalette() {
   }, [commands, query]);
 
   useEffect(() => {
-    if (paletteOpen) {
-      setQuery("");
-      setIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 30);
-    }
-  }, [paletteOpen]);
-
-  useEffect(() => setIndex(0), [query]);
+    const timeout = setTimeout(() => inputRef.current?.focus(), 30);
+    return () => clearTimeout(timeout);
+  }, []);
 
   if (!paletteOpen) return null;
 
@@ -104,7 +99,10 @@ export default function CommandPalette() {
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setIndex(0);
+            }}
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setIndex((i) => Math.min(i + 1, filtered.length - 1)); }
               else if (e.key === "ArrowUp") { e.preventDefault(); setIndex((i) => Math.max(i - 1, 0)); }

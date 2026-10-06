@@ -49,6 +49,13 @@ The tunnel exposes **your** dashboard over HTTPS. It does not (and cannot) provi
 TradingView webhook capability — that depends on TradingView itself. Never expose the
 database port through the tunnel.
 
+## Automated checks
+
+Run `npm test` from the project root. It compiles and runs the quant tests, builds
+the production app, and exercises login plus the paper-order/journal flow against
+an isolated local file store. The smoke test uses demo prices and does not
+contact Delta or enable live execution.
+
 ## Checklist
 
 - [ ] `LIVE_EXECUTION_ENABLED=false` until you truly need it

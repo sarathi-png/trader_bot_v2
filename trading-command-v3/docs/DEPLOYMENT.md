@@ -4,11 +4,12 @@
 
 ```bash
 npm install
-npx drizzle-kit push
+npm run db:push
 npm run dev
 ```
 
-PostgreSQL must be running (see `DATABASE_URL` in `.env`).
+PostgreSQL must be running. The Drizzle config reads `DATABASE_URL` from `.env`
+or the process environment.
 
 ## Vercel with Neon
 
@@ -20,7 +21,7 @@ the schema from this directory using the Neon **direct** connection string:
 ```powershell
 cd trading-command-v3
 $env:DATABASE_URL = "<Neon direct connection string>"
-npx drizzle-kit push --url "$env:DATABASE_URL"
+npm run db:push
 Remove-Item Env:DATABASE_URL
 ```
 
